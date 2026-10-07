@@ -6,6 +6,9 @@ map-teleport.ts - world map double-click teleport target
 DELIBERATE ADDITION, NOT NATIVE: retail's world map handles only mouse move,
 down and up (CIFWorldMap_OnMouseMessage 57F430). This is a GM-only port tool.
 
+Reverse-scroll mode shares this confirmation owner but accepts only
+authority-published point ids; it never issues a GM coordinate command.
+
 A double-click on the world map picks an outdoor point and asks
 for confirmation; Yes issues the existing GM coordinate warp. The server owns
 privilege, area, surface and stranding checks, and snaps the unknown height
@@ -29,6 +32,8 @@ MapTeleportTarget
 ================
 */
 export interface MapTeleportTarget {
+	readonly reversePointId?: number;
+	readonly name?: string;
 	readonly regionId: number;
 	readonly x: number;
 	readonly z: number;
@@ -44,7 +49,41 @@ The last painted map frame and the target awaiting confirmation.
 export function createMapTeleport() {
 	let frame: { page: number; clip: UiRect; pan: readonly [number, number]; center: Pose; } | null = null;
 	let pending: MapTeleportTarget | null = null;
+	let reverseSlot: number | null = null;
 	return {
+		/*
+  ================
+  reverseSlot
+  ================
+  */
+		reverseSlot: () => reverseSlot,
+		/*
+  ================
+  openReverse
+  ================
+  */
+		openReverse( slot: number ) {
+			reverseSlot = slot;
+			pending = null;
+		},
+		/*
+  ================
+  closeReverse
+  ================
+  */
+		closeReverse() {
+			reverseSlot = null;
+			pending = null;
+		},
+		/*
+  ================
+  pickReverse
+  ================
+  */
+		pickReverse( point: import("@/engine/foundation/ui/world-map").ReverseScrollPoint ) {
+			if ( reverseSlot === null ) return;
+			pending = { regionId: point.regionId, x: point.x, z: point.z, reversePointId: point.id, name: point.name };
+		},
 		view( page: number, clip: UiRect, pan: readonly [number, number], center: Pose ) {
 			frame = { page, clip, pan: [ pan[0], pan[1] ], center };
 		},

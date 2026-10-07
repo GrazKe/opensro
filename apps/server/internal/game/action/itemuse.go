@@ -219,6 +219,9 @@ func (rt *Runtime) HandleItemUse(
 			}
 			return rt.useCompositeScroll(divisionID, character, ref, rowIndex, request, nowMs, &result)
 		}
+		if family == itemUseReverseScroll {
+			return rt.useReverseScroll(reverseScrollUse{division: divisionID, character: character, row: rowIndex, request: request, ref: ref, tail: tail}, &result)
+		}
 		if family == itemUseReturn {
 			return rt.beginReturnScroll(divisionID, character, ref, rowIndex, request, nowMs, &result)
 		}

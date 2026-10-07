@@ -8,6 +8,7 @@ Child owners handle process-specific state while this owner commits item rows.
 
 ===========================================================================
 */
+import { decodeReverseScrollPoints, type ReverseScrollPoint } from "@/engine/foundation/ui/world-map";
 import { cosItemUseTail, type CosItemUseContext } from "@/engine/foundation/gameplay/cos-item-use";
 import { planContainerMove, sameStackIdentity, stackable } from "@/engine/foundation/gameplay/container-transfer";
 import { createMall } from "./mall/mall";
@@ -81,6 +82,8 @@ export function createInventory(
 	play: ( handle: import("@/engine/foundation/ui/sound-catalog").UiSoundHandle ) => void = () => {},
 	playItem: ( cue: import("@/engine/contracts/audio").ItemSoundRequest ) => void = () => {}
 ) {
+	let reverseScroll: { slot: number; refObjId: number; } | null = null;
+	let reverseScrollPoints: readonly ReverseScrollPoint[] = [];
 	const alchemy = createAlchemy(), gacha = createGacha(), mall = createMall(), magicOption = createMagicOptionGrant();
 	let mallDelivery: { prepared: ReturnType<typeof decodeShopItems>; slots: number[]; } | null = null;
 	let avatars = new Map<number, InventoryItem>();
@@ -441,6 +444,10 @@ bootstrap
 ================
 		*/
 		bootstrap( value: unknown ) {
+			reverseScroll = null;
+			reverseScrollPoints = decodeReverseScrollPoints(
+				(value as { reverseScrollPoints?: unknown; }).reverseScrollPoints
+			);
 			bindingMoves = [];
 			itemCooldowns = [];
 			presentations = new WeakMap();
@@ -1218,6 +1225,14 @@ A job dress bar (0x3434) holds the suit move's answer for its seconds.
 use
 ================
 		*/
+		cancelReverse() {
+			reverseScroll = null;
+		},
+		/*
+		================
+		use
+		================
+		*/
 		use( n: number, now = 0, context?: CosItemUseContext ) {
 			if ( timedOut ) throw Error( "Inventory transaction timed out; reconnect to resynchronize" );
 			const item = slots.get( slot( n ) );
@@ -1225,7 +1240,16 @@ use
 				throw new Error( "Item use unavailable" );
 			}
 			if ( itemCooldown( itemCooldowns, item.typeFlags, now ) ) return null;
+			const reverse = (item.typeFlags & 0x7ffc) === (3 << 2 | 3 << 5 | 3 << 7 | 3 << 11);
+			if ( reverse && context?.reverseChoice === undefined ) {
+				reverseScroll = { slot: n, refObjId: item.refObjId };
+				return null;
+			}
+			if ( reverse && (reverseScroll?.slot !== n || reverseScroll.refObjId !== item.refObjId) ) {
+				throw Error( "Reverse scroll selection changed" );
+			}
 			const tail = cosItemUseTail( item.typeFlags, [ ...slots.values() ], context );
+			if ( reverse ) reverseScroll = null;
 			const p = new Uint8Array( 3 + tail.length );
 			p.set( tail, 3 );
 			p[0] = n;
@@ -1822,6 +1846,8 @@ state
 				inventory: published ?? (published = [ ...slots.values() ].map( present )),
 				itemFlashes,
 				inventoryPending: busy(),
+				reverseScrollSlot: reverseScroll?.slot,
+				reverseScrollPoints,
 				error
 			};
 		},
@@ -1831,6 +1857,8 @@ clear
 ================
 		*/
 		clear() {
+			reverseScroll = null;
+			reverseScrollPoints = [];
 			bindingMoves = [];
 			itemCooldowns = [];
 			shopCompletionRevision = 0;

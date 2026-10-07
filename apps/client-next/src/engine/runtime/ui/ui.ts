@@ -396,6 +396,8 @@ import { stretchRing } from "@/engine/foundation/ui/stretch-ring";
 import { chatLayout } from "@/engine/foundation/ui/chat-layout";
 import {
 	worldMapImagePaths,
+	worldMapReversePoints,
+	REVERSE_SCROLL_MARKER,
 	worldMapDemand,
 	MAP_LOCAL_MARKER,
 	worldMapPageAt,
@@ -452,6 +454,8 @@ import {
 	partyProposalAssets,
 	partyProposalLayout,
 	guildProposalLayout,
+	reverseScrollLayout,
+	reverseScrollButtonQuads,
 	proposalLayout,
 	MESSAGE_FRAME,
 	MESSAGE_TILE,
@@ -1169,6 +1173,10 @@ export function createUi(
 		// Apply the same admission to hotkeys, menu links and contextual opens.
 		if ( next === "COS inventory" && !view?.gameplay?.cosRecords?.some( r => !r.dead && r.hp > 0 ) ) {
 			return false;
+		}
+		if ( next !== "Map" && mapTeleport.reverseSlot() !== null ) {
+			mapTeleport.closeReverse();
+			sendGameplay( { kind: "reverse-scroll-cancel" } );
 		}
 		shopOpenRequest = null;
 		if ( next !== "Shop" ) repairHud.reset();
@@ -2933,7 +2941,34 @@ export function createUi(
 			focusRequest = { id: null, revision: ++focusRevision, caret: 0 };
 			dirty = true;
 			return;
-		} else if ( id.startsWith( "premium-reverse:" ) ) {
+		} else if ( id.startsWith( "reverse-scroll-point:" ) ) {
+			const point = view.gameplay?.reverseScrollPoints?.find( row =>
+				row.id === Number( id.slice( "reverse-scroll-point:".length ) )
+			);
+			if ( point ) mapTeleport.pickReverse( point );
+			dirty = true;
+		} else if ( id === "reverse-scroll-map" ) {
+			if ( !experimental.state().saved.reverseScrollMap ) return;
+			const slot = view.gameplay?.reverseScrollSlot;
+			if ( slot !== undefined ) {
+				mapTeleport.openReverse( slot );
+				setPanel( "Map" );
+				mapPage = 0;
+				mapFollow = false;
+				mapPan = [ 0, 0 ];
+			}
+			dirty = true;
+		} else if ( id.startsWith( "reverse-scroll-choice:" ) ) {
+			const slot = view.gameplay?.reverseScrollSlot;
+			if ( slot !== undefined ) {
+				sendGameplay( {
+					kind: "item-use",
+					slot,
+					reverseChoice: Number( id.slice( "reverse-scroll-choice:".length ) )
+				} );
+			}
+		} else if ( id === "reverse-scroll-cancel" ) sendGameplay( { kind: "reverse-scroll-cancel" } );
+		else if ( id.startsWith( "premium-reverse:" ) ) {
 			sendGameplay( { kind: "premium-command", command: "reverse-return", choice: Number( id.slice( 16 ) ) } );
 		} else if ( id === "premium-reverse-cancel" ) sendGameplay( { kind: "premium-command-cancel" } );
 		else if ( id === "chat-send" && !view.gameplay?.chat?.pending ) {
@@ -3873,7 +3908,19 @@ export function createUi(
 				}
 				if ( event.kind !== "hover" ) return;
 			}
-			// Map teleport: confirmation modal, then the GM warp.
+			if (
+				view?.gameplay?.reverseScrollSlot !== undefined && mapTeleport.reverseSlot() === null &&
+				event.kind === "key" && event.code === "Escape"
+			) {
+				sendGameplay( { kind: "reverse-scroll-cancel" } );
+				dirty = true;
+				return;
+			}
+			if (
+				view?.gameplay?.reverseScrollSlot !== undefined && mapTeleport.reverseSlot() === null &&
+				event.kind === "key"
+			) return;
+			// Map teleport: confirmation modal, then reverse use or the GM warp.
 			const teleportTarget = mapTeleport.pending();
 			if ( teleportTarget ) {
 				if (
@@ -3888,8 +3935,20 @@ export function createUi(
 					event.kind === "key" && event.code === "Enter" && !composing ||
 					event.kind === "activate" && event.id === "map-teleport-confirm"
 				) {
+					const reverseSlot = mapTeleport.reverseSlot();
 					mapTeleport.clear();
 					dirty = true;
+					if ( reverseSlot !== null && teleportTarget.reversePointId !== undefined ) {
+						sendGameplay( {
+							kind: "item-use",
+							slot: reverseSlot,
+							reverseChoice: 4,
+							reversePointId: teleportTarget.reversePointId
+						} );
+						mapTeleport.closeReverse();
+						setPanel( "" );
+						return;
+					}
 					if ( view?.session?.phase === "world" && view.gameplay?.eligibility?.gm ) {
 						sendGameplay( { kind: "gm-command", line: mapTeleport.command( teleportTarget ) } );
 					}
@@ -3898,7 +3957,7 @@ export function createUi(
 				if ( event.kind !== "hover" ) return;
 			}
 			if (
-				event.kind === "region-double" && event.id === "map-pan" &&
+				event.kind === "region-double" && event.id === "map-pan" && mapTeleport.reverseSlot() === null &&
 				view?.session?.phase === "world" && view.gameplay?.eligibility?.gm
 			) {
 				if ( mapTeleport.pick( event.x, event.y ) ) dirty = true;
@@ -5977,6 +6036,10 @@ export function createUi(
 					sendGameplay( { kind: "auto-potion-input", blocked, itemMallOpen } );
 				}
 			}
+			if (
+				mapTeleport.reverseSlot() !== null &&
+				(phase !== "world" || next.gameplay?.reverseScrollSlot === undefined)
+			) mapTeleport.closeReverse();
 			if ( phase !== "world" ) cosHud.reset();
 			else if (
 				cosHud.reconcile(
@@ -8484,6 +8547,25 @@ export function createUi(
 					} );
 					quads.push( ...mapImages );
 					controls.push( ...mapHits );
+					if ( mapTeleport.reverseSlot() !== null && pose ) {
+						paths.push( REVERSE_SCROLL_MARKER );
+						const points = worldMapReversePoints( {
+							page: mapPage,
+							clip: inner,
+							pan: mapPan,
+							center: mapCenter ?? pose,
+							points: game.reverseScrollPoints ?? []
+						} );
+						for ( const { point, rect: r } of points ) {
+							image( r, REVERSE_SCROLL_MARKER, white, undefined, inner );
+							controls.push( {
+								id: "reverse-scroll-point:" + point.id,
+								label: point.name,
+								rect: r,
+								kind: "button"
+							} );
+						}
+					}
 					const nodes = hudData.map;
 					authoredButton(
 						{ ...nodes.GDR_WM_BTN_WNDSIZE!, rect: [ mw - 44, 10, 16, 16 ] },
@@ -10926,6 +11008,62 @@ export function createUi(
 						] ] as const
 					) button( id, hudCopy( key ), r[0], r[1], r[2] );
 					endWindow( admission, "quest-abandon" );
+				}
+				if ( game?.reverseScrollSlot !== undefined && mapTeleport.reverseSlot() === null ) {
+					controls = [];
+					blocks.push( full );
+					const admission = beginWindow(),
+						hasMap = experimental.state().saved.reverseScrollMap &&
+							(game.reverseScrollPoints?.length ?? 0) > 0,
+						layout = reverseScrollLayout( w, h, hasMap ? 4 : 3 );
+					paths.push( ...partyProposalAssets() );
+					quads.push(
+						...normalTile( layout.background, MESSAGE_TILE, resources.size( MESSAGE_TILE ), full ),
+						...frameRing(
+							layout.frame,
+							MESSAGE_FRAME,
+							PARTS.map( p => resources.size( MESSAGE_FRAME + p + ".png" ) ),
+							full
+						)
+					);
+					quads.push( ...text.quads( "Confirmation window", layout.title, full, white, { hAlign: 1 } ) );
+					quads.push(
+						...text.quads(
+							hudCopy( "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_REVERSE_PORTAL" ),
+							layout.question,
+							full,
+							white,
+							{ hAlign: 1 }
+						)
+					);
+					const rows = [
+						{
+							id: "reverse-scroll-choice:2",
+							name: hudCopy( "UIIT_MSG_ITEM_USE_REVERSE_PORTAL_RETRUN_TO_LAST_RETURN" )
+						},
+						{
+							id: "reverse-scroll-choice:3",
+							name: hudCopy( "UIIT_MSG_ITEM_USE_REVERSE_PORTAL_RETRUN_TO_LAST_DEATH" )
+						},
+						...(hasMap ?
+							[ { id: "reverse-scroll-map", name: "Move to certain location on the map." } ] :
+							[]),
+						{ id: "reverse-scroll-cancel", name: hudCopy( "UIIT_CTL_CANCEL" ) }
+					];
+					for ( const [i, row] of rows.entries() ) {
+						const r = layout.rows[i]!;
+						const first = quads.length;
+						button( row.id, row.name, r[0], r[1], r[2] );
+						const index = quads.findIndex( ( quad, i ) =>
+							i >= first &&
+							[ BUTTON, BUTTON_FOCUS, BUTTON_PRESS, BUTTON_DISABLE ].includes( quad.texture ?? "" )
+						);
+						if ( index >= 0 ) {
+							const quad = quads[index]!, size = resources.size( quad.texture! );
+							if ( size ) quads.splice( index, 1, ...reverseScrollButtonQuads( quad, size[0] ) );
+						}
+					}
+					endWindow( admission, "reverse-scroll" );
 				}
 				if ( game?.reverseReturnChoice ) {
 					// 6AD990's type 0x24 confirm box: the reverse return's two points.
@@ -15449,9 +15587,15 @@ export function createUi(
 					)
 				);
 				const region = String( teleportShown.regionId ),
-					place = hud.data()?.zones[region] ?? "Region " + region;
+					place = teleportShown.name ?? hud.data()?.zones[region] ?? "Region " + region;
 				quads.push(
-					...text.quads( "Teleport", layout.title, full, white, { hAlign: 1 } ),
+					...text.quads(
+						teleportShown.reversePointId === undefined ? "Teleport" : "Confirmation window",
+						layout.title,
+						full,
+						white,
+						{ hAlign: 1 }
+					),
 					...text.quads( place, layout.name, full, white, { hAlign: 1 } ),
 					...text.quads( "Teleport here?", layout.question, full, white, { hAlign: 1 } )
 				);

@@ -531,3 +531,22 @@ func normalizeGeneratedMonsterSpawn(spawn monster.SpawnPoint) monster.SpawnPoint
 	spawn.Z = position.Z
 	return spawn
 }
+
+/*
+================
+UniqueReturnAnchors
+
+The immutable outdoor unique nests, independent of live spawn timing.
+================
+*/
+func (s *MonsterState) UniqueReturnAnchors() []monster.SpawnPoint {
+	var points []monster.SpawnPoint
+	for _, nest := range s.template.Nests {
+		ref, ok := s.template.Refs[nest.RefObjID]
+		if !ok || ref.MonsterType&0x0f != 3 || nest.WorldCode != "INS_DEFAULT" || nest.RegionID&0x8000 != 0 {
+			continue
+		}
+		points = append(points, nest.SpawnPoint)
+	}
+	return points
+}

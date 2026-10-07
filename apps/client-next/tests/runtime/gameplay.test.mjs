@@ -1651,3 +1651,33 @@ test("portrait selection stays local while the previous target grant retains its
 	target.clear();
 	assert.equal( target.selectionIntent(), 0 );
 });
+
+/*
+================
+reverse scroll selection lifecycle
+================
+*/
+test("reverse scroll opens without sending or consuming and cancellation clears its choice", () => {
+	const sent = [],
+		inv = createInventory( frame => sent.push( frame ) ),
+		typeFlags = 3 << 2 | 3 << 5 | 3 << 7 | 3 << 11;
+	inv.bootstrap( {
+		refItemSnapshot: [ { refObjId: 3795, typeFlags, nativeFields: { maxStack: 50 } } ],
+		equipItems: [ { refObjId: 3795, slot: 13, body: item( 3795, 2 ) } ]
+	} );
+	assert.equal( inv.use( 13, 0 ), null );
+	assert.equal( sent.length, 0 );
+	assert.equal( inv.state().reverseScrollSlot, 13 );
+	assert.equal( inv.state().inventoryPending, false );
+	assert.equal( inv.state().inventory[0].quantity, 2 );
+	inv.cancelReverse();
+	assert.equal( inv.state().reverseScrollSlot, undefined );
+	assert.throws( () => inv.use( 13, 0, { records: [], reverseChoice: 2 } ), /selection changed/ );
+	inv.use( 13, 0 );
+	const frame = inv.use( 13, 0, { records: [], reverseChoice: 2 } );
+	assert.equal( frame.opcode, 0x75bd );
+	assert.deepEqual( [ ...frame.payload ], [ 13, typeFlags & 255, typeFlags >>> 8, 2 ] );
+	assert.equal( sent.length, 1 );
+	assert.equal( inv.state().reverseScrollSlot, undefined );
+	assert.equal( inv.state().inventory[0].quantity, 2, "server receipt owns consumption" );
+});

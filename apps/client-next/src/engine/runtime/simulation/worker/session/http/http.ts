@@ -152,7 +152,14 @@ async function loadWorldReferences(
 	value: unknown,
 	base: string,
 	signal: AbortSignal
-): Promise<{ refSkillSnapshot: unknown[]; refItemSnapshot: unknown[]; itemCommandReferences?: unknown[]; }> {
+): Promise<
+	{
+		refSkillSnapshot: unknown[];
+		refItemSnapshot: unknown[];
+		itemCommandReferences?: unknown[];
+		reverseScrollPoints?: unknown[];
+	}
+> {
 	const ref = value as { path?: unknown; sha256?: unknown; bytes?: unknown; };
 	if (
 		!ref || typeof ref.sha256 !== "string" || !/^[a-f0-9]{64}$/.test( ref.sha256 ) ||
@@ -182,12 +189,13 @@ async function loadWorldReferences(
 		refSkillSnapshot?: unknown;
 		refItemSnapshot?: unknown;
 		itemCommandReferences?: unknown;
+		reverseScrollPoints?: unknown;
 	};
 	if (
 		!parsed ||
 		Object.keys( parsed ).some( key =>
 			key !== "referencesVersion" && key !== "skillLifecycleVersion" && key !== "refSkillSnapshot" &&
-			key !== "refItemSnapshot" && key !== "itemCommandReferences"
+			key !== "refItemSnapshot" && key !== "itemCommandReferences" && key !== "reverseScrollPoints"
 		) ||
 		!Array.isArray( parsed.refSkillSnapshot ) || parsed.refSkillSnapshot.length > REFERENCE_ROWS_LIMIT
 	) throw Error( "Invalid world references" );
@@ -209,6 +217,9 @@ async function loadWorldReferences(
 	return {
 		refSkillSnapshot: parsed.refSkillSnapshot,
 		refItemSnapshot: parsed.refItemSnapshot,
+		...(parsed.reverseScrollPoints === undefined ?
+			{} :
+			{ reverseScrollPoints: parsed.reverseScrollPoints as unknown[] }),
 		...(parsed.itemCommandReferences === undefined ?
 			{} :
 			{ itemCommandReferences: parsed.itemCommandReferences as unknown[] })

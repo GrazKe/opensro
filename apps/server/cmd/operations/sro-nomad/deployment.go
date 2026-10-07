@@ -71,6 +71,7 @@ type deployment struct {
 	GMCharacters   string
 	BetaMastery    string
 	// PartyMasteries comes from the deployer's SRO_PARTY_MASTERIES.
+	ReverseMap            bool
 	PartyMasteries        bool
 	TransportCert         string
 	TransportKey          string
@@ -389,6 +390,7 @@ func resolveDeployment(
 		GMCharacters:          gmCharacters,
 		BetaMastery:           betaMastery,
 		PartyMasteries:        party.MasteriesFromEnv(),
+		ReverseMap:            os.Getenv("SRO_REVERSE_MAP") == "1",
 		TransportCert:         transportCert,
 		TransportKey:          transportKey,
 		TransportTLSID:        transportTLSID,
@@ -691,6 +693,7 @@ func (deployment *deployment) gameVariables(
 		"allowed_origins":     deployment.AllowedOrigins,
 		"gm_characters":       deployment.GMCharacters,
 		"beta_mastery":        deployment.BetaMastery,
+		"reverse_map":         boolEnvValue(deployment.ReverseMap),
 		"party_masteries":     boolEnvValue(deployment.PartyMasteries),
 		"transport_pprof":     boolEnvValue(deployment.Pprof),
 	})

@@ -1978,8 +1978,16 @@ state here before a command can claim a native wire conversation.
 				dirty = true;
 				return null;
 			}
+			if ( command.kind === "reverse-scroll-cancel" ) {
+				inventory.cancelReverse();
+				dirty = true;
+				return null;
+			}
 			if ( command.kind === "item-use" ) {
+				dirty = true;
 				return inventory.use( command.slot, now, {
+					reverseChoice: command.reverseChoice,
+					reversePointId: command.reversePointId,
 					records: [ ...cosRecords.values() ],
 					selectedGid: command.companionGid ?? (cosSelection.selected() || undefined),
 					targetGid: targeting.state().target ?? 0,

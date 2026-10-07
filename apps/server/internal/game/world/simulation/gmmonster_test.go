@@ -143,3 +143,26 @@ func TestGMSpawnRarityMatchesNative520D90(t *testing.T) {
 		t.Fatalf("giant request produced rarity %d hp %d/%d", actor.Rarity(), actor.CurrentHP, actor.EffectiveMaxHP())
 	}
 }
+
+/*
+================
+TestUniqueReturnAnchorsExcludeOrdinaryAndInstanceNests
+================
+*/
+func TestUniqueReturnAnchorsExcludeOrdinaryAndInstanceNests(t *testing.T) {
+	field := monster.SpawnPoint{RefObjID: 1, RegionID: 25000, X: 100, Y: 30, Z: 200}
+	ordinary := field
+	ordinary.RefObjID = 2
+	indoor := field
+	indoor.RegionID = 0x8001
+	state := NewMonsterState(monster.TemplateFromParts(map[uint32]monster.MonsterRef{1: {RefObjID: 1, MonsterType: 3}, 2: {RefObjID: 2, MonsterType: 0}}, []monster.NestRow{
+		{SpawnPoint: field, WorldCode: "INS_DEFAULT"},
+		{SpawnPoint: ordinary, WorldCode: "INS_DEFAULT"},
+		{SpawnPoint: indoor, WorldCode: "INS_DEFAULT"},
+		{SpawnPoint: field, WorldCode: "INS_TEST"},
+	}))
+	points := state.UniqueReturnAnchors()
+	if len(points) != 1 || points[0] != field {
+		t.Fatalf("wrong map anchors: %+v", points)
+	}
+}

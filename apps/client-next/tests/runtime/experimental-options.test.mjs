@@ -23,6 +23,7 @@ const { createExperimentalHud, EXPERIMENTAL_TABS } = await import(
 const OFF = Object.freeze( {
 	chatTimestamps: false,
 	developerDiagnostics: false,
+	reverseScrollMap: false,
 	postProcessing: false,
 	anisotropicFiltering: false,
 	heightFog: false
@@ -124,4 +125,19 @@ test("the window's tabs cover every preference once and Open returns to Video", 
 	assert.equal( hud.state().tab, 0 );
 	assert.throws( () => hud.selectTab( 3 ) );
 	assert.throws( () => hud.selectTab( -1 ) );
+});
+
+/*
+================
+Reverse scroll map opt-in
+================
+*/
+test("reverse map starts off and requires an explicit confirmed preference", () => {
+	const hud = createExperimentalHud();
+	assert.equal( hud.state().saved.reverseScrollMap, false );
+	hud.toggle( "reverseScrollMap" );
+	assert.equal( hud.state().saved.reverseScrollMap, false );
+	assert.equal( hud.confirm().reverseScrollMap, true );
+	hud.reset();
+	assert.equal( hud.confirm().reverseScrollMap, false );
 });

@@ -333,8 +333,11 @@ export type GameplayCommand =
 		readonly destination: number;
 		readonly quantity: number;
 	}
+	| { readonly kind: "reverse-scroll-cancel"; }
 	| {
 		readonly kind: "item-use";
+		readonly reverseChoice?: number;
+		readonly reversePointId?: number;
 		readonly slot: number;
 		readonly companionGid?: number;
 		readonly revivalSlot?: number;
@@ -561,6 +564,8 @@ export interface GameplayState {
 		readonly itemName?: string;
 	})[];
 	readonly reverseReturnChoice?: boolean;
+	readonly reverseScrollSlot?: number;
+	readonly reverseScrollPoints?: readonly import("@/engine/foundation/ui/world-map").ReverseScrollPoint[];
 	readonly abnormalRecords?: readonly import("@/engine/foundation/gameplay/abnormal-snapshot").AbnormalRecord[];
 	readonly selectionDecal?: SelectionDecal | null;
 	readonly notices?: readonly import("@/engine/foundation/gameplay/system-notices").SystemNotice[];

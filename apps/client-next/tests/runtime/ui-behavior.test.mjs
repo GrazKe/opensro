@@ -4962,3 +4962,88 @@ test("the player panel draws native siege rank and guild status and removes them
 		f.dispose();
 	}
 });
+
+/*
+================
+Reverse scroll prompt and map confirmation
+================
+*/
+test("reverse scroll choices admit native chrome and map markers dispatch an item use", async () => {
+	const { experimentalOptions } = await load( "src/engine/foundation/ui/experimental-options.ts" );
+	const sent = [], f = uiFixture( command => sent.push( command ) );
+	try {
+		Object.assign( f.state.gameplay, {
+			reverseScrollSlot: 13,
+			reverseScrollPoints: [ { id: 1, name: "Jangan", regionId: 25000, x: 969, y: 0, z: 1369 } ]
+		} );
+		Object.assign( f.state.gameplay.pose, { regionId: 25000, x: 969, y: 0, z: 1369 } );
+		let scene = f.ui.step( f.state, 0 );
+		for ( let t = 100; t <= 1600; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-choice:2" ) );
+		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-choice:3" ) );
+		assert.ok(
+			!defined( scene ).controls.some( row => row.id === "reverse-scroll-map" ),
+			"extension is off by default"
+		);
+		f.ui.event( { kind: "experimental-preferences", value: experimentalOptions( { reverseScrollMap: true } ) } );
+		scene = f.ui.step( f.state, 1700 ) ?? scene;
+		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-map" ) );
+		f.ui.event( { kind: "activate", id: "reverse-scroll-map" } );
+		for ( let t = 1800; t < 4000; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		scene = f.ui.step( f.state, 4000 ) ?? scene;
+		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-point:1" ) );
+		assert.ok(
+			!defined( scene ).controls.some( row => row.id === "reverse-scroll-cancel" ),
+			"map has no added Cancel button"
+		);
+		f.ui.event( { kind: "activate", id: "reverse-scroll-point:1" } );
+		for ( let t = 4100; t < 4800; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		scene = f.ui.step( f.state, 4800 ) ?? scene;
+		assert.ok( defined( scene ).controls.some( row => row.id === "map-teleport-confirm" ) );
+		assert.equal( sent.length, 0, "opening and picking never spends a scroll" );
+		f.ui.event( { kind: "activate", id: "map-teleport-cancel" } );
+		f.ui.step( f.state, 4900 );
+		assert.equal( sent.length, 0, "No returns to the map without sending" );
+		f.ui.event( { kind: "activate", id: "reverse-scroll-point:1" } );
+		f.ui.step( f.state, 5000 );
+		f.ui.event( { kind: "activate", id: "map-teleport-confirm" } );
+		assert.deepEqual( sent.at( -1 ), {
+			kind: "gameplay",
+			command: { kind: "item-use", slot: 13, reverseChoice: 4, reversePointId: 1 }
+		} );
+	} finally {
+		f.dispose();
+	}
+});
+
+/*
+================
+GM map confirmation remains separate from reverse selection
+================
+*/
+test("reverse lifecycle cleanup preserves the existing GM map confirmation", () => {
+	const sent = [], f = uiFixture( command => sent.push( command ) );
+	try {
+		Object.assign( f.state.gameplay, { eligibility: { gm: true } } );
+		Object.assign( f.state.gameplay.pose, { regionId: 25000, x: 969, y: 0, z: 1369 } );
+		let scene = f.ui.step( f.state, 0 );
+		for ( let t = 100; t <= 1400; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		f.ui.event( { kind: "key", code: "KeyM" } );
+		for ( let t = 1500; t <= 2200; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		const map = defined( scene ).controls.find( row => row.id === "map-pan" );
+		assert.ok( map );
+		f.ui.event( {
+			kind: "region-double",
+			id: "map-pan",
+			x: map.rect[0] + map.rect[2] / 2,
+			y: map.rect[1] + map.rect[3] / 2
+		} );
+		for ( let t = 2300; t <= 3000; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		assert.ok( defined( scene ).controls.some( row => row.id === "map-teleport-confirm" ) );
+		f.ui.event( { kind: "activate", id: "map-teleport-confirm" } );
+		assert.equal( sent.at( -1 ).command.kind, "gm-command" );
+		assert.match( sent.at( -1 ).command.line, /^\/warp / );
+	} finally {
+		f.dispose();
+	}
+});

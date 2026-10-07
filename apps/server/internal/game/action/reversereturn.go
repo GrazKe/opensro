@@ -18,8 +18,8 @@ a missing point (0x1C21 for one outside any world), and the move. Its
 own 0x1E test (4F36A4) asks the player's service set, which is always
 empty, so it never refuses.
 
-ITEM_MALL_REVERSE_RETURN_SCROLL (3/3/3/3) is never used from the bag in
-v1.150. INFERENCE (v1.188 spends it only from the bag, 4A00C0): a teleport
+The v1.150 item and text entries define the bag prompt implemented in
+reverse_scroll.go. INFERENCE: preserve the existing gate shortcut: a teleport
 gate lists the rows while the player holds a scroll, and the click runs the
 scroll's own rule: the shared return admissions, the recorded point (0x1885
 / 0x1886 when absent), the timed cast, and the answer on the item-use
