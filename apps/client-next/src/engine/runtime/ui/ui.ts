@@ -7912,7 +7912,10 @@ export function createUi(
 					// The local character, selected from its portrait, wears the
 					// player layout (5814D0 handles the local CICUser too).
 					const shown = target.kind === "local-player" ? { ...target, kind: "player" as const } : target;
-					const hp = game?.vitals.find( v => v.gid === target.gid )?.hp ?? record?.hp,
+					// Pickup records retain wire vitals for compatibility, not a health gauge.
+					const hp = record && cosClass( record.band ) === COS_CLASS_PICKUP ?
+							undefined :
+							game?.vitals.find( v => v.gid === target.gid )?.hp ?? record?.hp,
 						output = targetStatus(
 							hudData.targets,
 							maxHp === target.maxHp ? shown : { ...shown, maxHp },

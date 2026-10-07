@@ -51,7 +51,7 @@ test("revival identifies the dead summoner slot and never appends a live GID", (
 	const item = {
 		slot: 21,
 		refObjId: 1,
-		typeFlags: 0xcc,
+		typeFlags: 0x08cc,
 		quantity: 1,
 		plus: 0,
 		durability: 0,
@@ -164,12 +164,17 @@ test("renewal and revival drag targets use owned summoner slots", () => {
 		Uint8Array.of( 26 )
 	);
 	assert.equal( companionItemTargetCommand( source, { ...target, typeFlags: 0x08cc } ), null );
+	assert.equal( companionItemTargetCommand( { ...source, typeFlags: flags( 1, 6 ) }, target ), null );
+	assert.throws( () => cosItemUseTail( flags( 1, 6 ), [ target ] ), /dead companion/ );
 	assert.equal( companionItemTargetCommand( source, { ...target, summon: { state: 1, rentals: [] } } ), null );
-	assert.deepEqual( companionItemTargetCommand( { ...source, typeFlags: flags( 1, 6 ) }, target ), {
-		kind: "item-use",
-		slot: 25,
-		revivalSlot: 24
-	} );
+	assert.deepEqual(
+		companionItemTargetCommand( { ...source, typeFlags: flags( 1, 6 ) }, { ...target, typeFlags: 0x08cc } ),
+		{
+			kind: "item-use",
+			slot: 25,
+			revivalSlot: 24
+		}
+	);
 });
 
 test("automatic pet use requires the selected compatible companion and preserves retries", () => {

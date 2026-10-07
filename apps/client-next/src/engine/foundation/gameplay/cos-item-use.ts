@@ -66,6 +66,7 @@ export function cosItemUseTail(
 	if ( group === 1 && subtype === 6 ) {
 		const candidates = items.filter( row =>
 			row.slot >= 13 && row.summon?.state === 4 &&
+			(row.typeFlags & 0x7fc) === 0xcc && (row.typeFlags >>> 11 & 31) === 1 &&
 			(context?.revivalSlot === undefined || row.slot === context.revivalSlot)
 		);
 		if ( candidates.length !== 1 ) throw Error( "Select a dead companion's summoner item" );
@@ -124,7 +125,10 @@ export function companionItemTargetCommand(
 	// The gender change tool dropped on a bag item uses itself on it.
 	if ( group === 13 && subtype === 8 ) return { kind: "item-use", slot: source.slot, targetSlot: target.slot };
 	if ( !target.summon ) return null;
-	if ( group === 1 && subtype === 6 && target.summon.state === 4 ) {
+	if (
+		group === 1 && subtype === 6 && target.summon.state === 4 &&
+		(target.typeFlags & 0x7fc) === 0xcc && (target.typeFlags >>> 11 & 31) === 1
+	) {
 		return { kind: "item-use", slot: source.slot, revivalSlot: target.slot };
 	}
 	if (

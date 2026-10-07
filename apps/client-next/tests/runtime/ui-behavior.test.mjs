@@ -4922,6 +4922,22 @@ test("an attack pet shows its mini window under the player mini window", () => {
 		f.state.gameplay.cosRecords = [ { ...f.state.gameplay.cosRecords[0], band: 4 } ];
 		for ( let i = 0; i < 5; i++ ) f.ui.step( f.state, 1100 + i );
 		assert.ok( !f.hasText( "Fang" ), "a pickup pet has no mini window" );
+		f.state.entities = [ ...f.state.entities, {
+			...f.state.entities[0],
+			gid: 7,
+			kind: "cos",
+			refObjId: 100,
+			name: "Fang",
+			maxHp: 100
+		} ];
+		f.state.gameplay.target = 7;
+		f.state.gameplay.vitals = [ ...f.state.gameplay.vitals, { gid: 7, hp: 50, mp: 0 } ];
+		for ( let i = 0; i < 20; i++ ) f.ui.step( f.state, 1200 + i );
+		assert.ok( f.hasText( "Fang" ), "the selected grab pet still has its name" );
+		assert.ok(
+			!f.scenes.at( -1 ).quads.some( q => q.rect[1] === 44 && q.rect[3] === 4 ),
+			"a grab pet has no target health gauge even without spawn type metadata"
+		);
 	} finally {
 		f.dispose();
 	}

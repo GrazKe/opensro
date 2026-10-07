@@ -9,6 +9,7 @@ package action
 
 import (
 	"opensro.online/server/internal/game/enterworld"
+	"opensro.online/server/internal/game/item/wire"
 	"testing"
 )
 
@@ -32,4 +33,44 @@ func TestGrabPetCannotBeAttackedOrAcquired(t *testing.T) {
 			t.Fatal("grab pet appears in monster acquisition candidates")
 		}
 	}
+}
+
+/*
+================
+TestGrabPetIgnoresPeriodicDamageAndResourceDebit
+================
+*/
+func TestGrabPetIgnoresPeriodicDamageAndResourceDebit(t *testing.T) {
+	rt, clock, c, _ := newCombatTestRuntime(t, 100)
+	equipCombatTestPet(t, rt, c, 4)
+	pet := c.ActiveCOS
+	before := pet.CurrentHP
+	if rt.livePet(c, pet.GID) {
+		t.Fatal("pickup pet admitted combat recovery items")
+	}
+	owner := rt.newCosAbnormalOwnerForPet(testDivision, c, pet, clock.NowMs())
+	owner.Hit(99, true, before, 1, 0)
+	owner.ConsumeResources(int32(before), 1, 0)
+	owner.commit()
+	if pet.CurrentHP != before || owner.fatal || len(owner.hits) != 0 {
+		t.Fatalf("pickup pet admitted periodic combat: %+v", pet)
+	}
+}
+
+/*
+================
+TestGrassOfLifeCannotReviveGrabPet
+================
+*/
+func TestGrassOfLifeCannotReviveGrabPet(t *testing.T) {
+	c, refs := persistentSummonFixture()
+	rt, _ := newTestRuntime(c, refs)
+	useSummonerFixture(t, rt, c, 24, refs.staticItemSource["SUMMON_PICKUP"])
+	pet := c.Companions()[0]
+	pet.Summoned, pet.StateFlags, pet.CurrentHP = false, 0, 0
+	ref := &enterworld.ItemRef{Codename: "REVIVE", RefObjID: 999, TypeIDs: [4]int64{3, 3, 1, 6}, Country: 3,
+		NativeFields: enterworld.NewNativeFields(map[string]float64{"canUse": 1})}
+	refs.staticItemSource[ref.Codename] = ref
+	c.MissionInventory = append(c.MissionInventory, enterworld.InventoryRow{Slot: 25, RefObjID: ref.RefObjID, Codename: ref.Codename, TypeFlags: ref.TypeFlags(), StackCount: 1})
+	assertItemUseRefusedUnchanged(t, rt, c, wire.NewWriter(4).U8(25).U16(ref.TypeFlags()).U8(24).Payload(), wire.ErrCodeCosRefused)
 }

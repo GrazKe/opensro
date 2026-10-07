@@ -83,6 +83,10 @@ func (rt *Runtime) extendCompanionLease(use companionLeaseUse, result *OpResult)
 		return false
 	}
 	pet.RentalExpiresAtUnix = base + seconds
+	// Pickup pets have no combat health. Repair the retained wire vitals
+	// when renewing a record damaged by an older server implementation.
+	pet.CurrentHP = max(cosRef.MaxHP, 1)
+	pet.CurrentMP = cosRef.MaxMP
 	pet.StateFlags |= 1
 	pet.RefreshRentalTimes(use.nowUnix)
 	remaining := rt.consumeItemUseRow(use.character, use.row)
