@@ -17,20 +17,16 @@ import (
 // EnvPetPacing is port-only, not native; unset retains authored movement.
 const EnvPetPacing = "SRO_PET_PACING"
 
-// EnvPetRecovery is port-only, not native; unset disables custom relocation.
-const EnvPetRecovery = "SRO_PET_RECOVERY"
-
 /*
 ================
 Policies
 
 The port-only pet rules, read once at startup and handed to the action
-runtime. The zero value is native: authored speeds, no relocation.
+runtime. The zero value is native: authored speeds.
 ================
 */
 type Policies struct {
-	Pacing   bool
-	Recovery bool
+	Pacing bool
 }
 
 /*
@@ -39,7 +35,7 @@ PoliciesFromEnv
 ================
 */
 func PoliciesFromEnv() Policies {
-	return Policies{Pacing: policyEnabled(EnvPetPacing), Recovery: policyEnabled(EnvPetRecovery)}
+	return Policies{Pacing: policyEnabled(EnvPetPacing)}
 }
 
 /*

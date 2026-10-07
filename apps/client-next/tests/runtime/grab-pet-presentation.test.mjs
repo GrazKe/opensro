@@ -1,7 +1,7 @@
 /*
 ===========================================================================
 
-grab-pet-presentation.test.mjs - grab size and retained summoner states
+grab-pet-presentation.test.mjs - retained summoner slot states
 
 ===========================================================================
 */
@@ -9,21 +9,12 @@ import "../helpers/native-source-loader.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { companionModelScale } = await import( "../../src/engine/foundation/rendering/companion-scale.ts" );
 const { createCompanionRentals } = await import(
 	"../../src/engine/runtime/simulation/worker/session/world/gameplay/inventory/companion-rentals.ts"
 );
 const { itemSlotWash, itemSlotOverlays } = await import(
 	"../../src/engine/foundation/ui/item-slot-effects.ts"
 );
-
-test("only opted-in grab pets shrink by a quarter", () => {
-	assert.equal( companionModelScale( 0x21c6 ), 1 );
-	assert.equal( companionModelScale( 0x21c6, true ), 0.75 );
-	for ( const type of [ 0x19c6, 0x09c6, 0x11c6, 0x31c6, 0x20c6 ] ) {
-		assert.equal( companionModelScale( type, true ), 1 );
-	}
-});
 
 test("active pets glow; expired and dead pets are blue", () => {
 	// 54FC80: the summoned state shows only the animated edge glow.

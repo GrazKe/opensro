@@ -176,7 +176,6 @@ export function startRuntime(
 			if ( event.kind === "camera-preferences" ) input.sight( event.value );
 			if ( event.kind === "experimental-preferences" ) {
 				renderer.experimentalVideo( experimentalVideo( event.value ) );
-				characters.experimental( event.value.smallerGrabPets );
 			}
 			if ( event.kind === "audio-preferences" ) audio.options( event.value );
 			if ( event.kind === "chat-blocks" ) simulation.session( { kind: "chat-blocks", value: event.value } );

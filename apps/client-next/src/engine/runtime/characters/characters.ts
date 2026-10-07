@@ -896,14 +896,6 @@ export function createCharacterPresentation(
 			);
 			finishFrame( { entities, seconds, cameraPitch, blindHeld }, begun, presented, events, actors );
 		},
-		/*
-		================
-		experimental
-		================
-		*/
-		experimental( enabled: boolean ) {
-			actorPresentation.experimental( enabled );
-		},
 		ready: ( gid: number ) => output.displayed.has( gid ),
 		/*
 		================

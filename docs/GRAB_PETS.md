@@ -28,23 +28,15 @@ clear space and enable grabbing again. Expiry dismisses the pet and keeps its
 stored items. Lease renewal restores access to that same pet.
 
 Summoned item icons show the retail animated edge; dead or expired item icons
-have the retail blue wash. The Experimental window has a Smaller grab pets
-option (off by default), which uses 75% of their previous size. As in the
-original server, monsters ignore grab pets (their hostility check refuses a
-grab pet first), so direct and area monster attacks cannot damage them.
+have the retail blue wash. As in the original server, monsters ignore grab
+pets (their hostility check refuses a grab pet first), so direct and area
+monster attacks cannot damage them.
 
-Two server options are port-only and off by default; the game server reads
-them once at startup. Set `SRO_PET_PACING=1` to move grab and growth pets at
-80% of their run speed; walking and mount speeds are unchanged, and the native
-follow and battle speed rules still compare the unpaced speed.
-
-Set `SRO_PET_RECOVERY=1` to let grab and growth pets relocate beside their owner when the separation exceeds
-1,200 game units, or after 5 seconds without at least 2 units of movement
-progress while trying to move. Idle pets and movement-blocking status effects
-do not accrue a stuck timer. Recovery cancels the pending pickup or combat
-intent, preserving the same pet, inventory, health, and lease. These thresholds
-are port-only, not native. Both server flags default off, preserving the
-native behaviour.
+One server option is port-only and off by default; the game server reads it
+once at startup. Set `SRO_PET_PACING=1` to move grab and growth pets at 80% of
+their run speed; walking and mount speeds are unchanged, and the native follow
+and battle speed rules still compare the unpaced speed. Unset, pets move at
+their native speeds.
 
 ## Evidence and implementation
 
@@ -63,8 +55,7 @@ repository contracts, rather than later private-server bot features.
 The movement repair compares the terrain height at the integer precision used
 by destination packets. It still revalidates the rounded horizontal endpoint
 against collision, so the repair does not bypass walls. Combat exclusion
-follows the original server; the model size adjustment is an Experimental
-option.
+follows the original server.
 
 ## Quick in-game check
 
