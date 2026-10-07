@@ -13,7 +13,6 @@ the executor raises (6A2350 case 5). The UI draws from it every frame.
 ===========================================================================
 */
 import type { GameplayCommand, InventoryItem, CosRecord } from "@/engine/contracts/gameplay";
-import { companionItemTargetCommand } from "@/engine/foundation/gameplay/cos-item-use";
 import { cosClass } from "@/engine/foundation/ui/cos-command";
 
 const COMPANION_LEASE_CURSOR = 0xa6;
@@ -51,14 +50,14 @@ export function createCosHud() {
 		================
 		chooseClockTarget
 
-		567372 checks cursor A6; 5673A7 opens the type-1F confirmation before use.
+		567372 checks cursor A6: any occupied inventory or equipment slot opens
+		the type-1F confirmation (5673A7) and clears the cursor. The client does
+		not judge the target; the server refuses one that is not a grab pet.
 		================
 		*/
 		chooseClockTarget( item: InventoryItem | undefined ) {
 			if ( !clock || !item || renewal ) return false;
-			const command = companionItemTargetCommand( clock, item );
-			if ( !command ) return false;
-			renewal = command;
+			renewal = { kind: "item-use", slot: clock.slot, summonerSlot: item.slot };
 			return true;
 		},
 		/*

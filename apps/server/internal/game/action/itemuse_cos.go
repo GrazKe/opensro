@@ -183,10 +183,6 @@ func (rt *Runtime) applyPetRevival(
 	if !exists || cosRef == nil || cosRef.RefObjID != pet.RefObjID {
 		return false
 	}
-	if cosRef.TidWord>>11 != attackPetBand {
-		*result = itemUseFailure(wire.ErrCodeCosRefused)
-		return false
-	}
 	pet.StateFlags |= 1
 	// HP is CCOSData+0x2C from ref+0x19C; MP is +0x30 from ref+0x1A0.
 	pet.CurrentHP = cosRef.MaxHP

@@ -7969,10 +7969,9 @@ export function createUi(
 					// The local character, selected from its portrait, wears the
 					// player layout (5814D0 handles the local CICUser too).
 					const shown = target.kind === "local-player" ? { ...target, kind: "player" as const } : target;
-					// Pickup records retain wire vitals for compatibility, not a health gauge.
-					const hp = record && cosClass( record.band ) === COS_CLASS_PICKUP ?
-							undefined :
-							game?.vitals.find( v => v.gid === target.gid )?.hp ?? record?.hp,
+					// CIFTargetNPC_SetTargetAndLayout (5823B0) shows the 168x4 gauge for
+					// every non-combat COS, grab pets included.
+					const hp = game?.vitals.find( v => v.gid === target.gid )?.hp ?? record?.hp,
 						output = targetStatus(
 							hudData.targets,
 							maxHp === target.maxHp ? shown : { ...shown, maxHp },
@@ -15474,7 +15473,12 @@ export function createUi(
 						vAlign: 0
 					} ),
 					...text.quads(
-						hudCopy( cosHud.renewal() ? "UIIT_CTL_WNETWORK_COS_EXTEND" : "UIIT_MSG_COS_CLEAN_CONFIRM1" ),
+						// CIFMessageBox type 0x1F (52F460) asks with the two CANCLE lines.
+						hudCopy(
+							cosHud.renewal() ?
+								"UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_1" :
+								"UIIT_MSG_COS_CLEAN_CONFIRM1"
+						),
 						layout.name,
 						full,
 						white,
@@ -15485,7 +15489,9 @@ export function createUi(
 					),
 					...text.quads(
 						hudCopy(
-							cosHud.renewal() ? "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE" : "UIIT_MSG_COS_CLEAN_CONFIRM2"
+							cosHud.renewal() ?
+								"UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_2" :
+								"UIIT_MSG_COS_CLEAN_CONFIRM2"
 						),
 						layout.question,
 						full,

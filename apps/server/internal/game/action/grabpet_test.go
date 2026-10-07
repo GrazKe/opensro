@@ -59,10 +59,14 @@ func TestGrabPetIgnoresPeriodicDamageAndResourceDebit(t *testing.T) {
 
 /*
 ================
-TestGrassOfLifeCannotReviveGrabPet
+TestGrassOfLifeHasNoServerBandCheck
+
+CGItemExpendable_UseOnCOS (49D240) case 6 revives any COS summoner whose
+state bit 0 is clear; the v1.150 client (6961B0) keeps grab pets out with
+UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT. The server adds no band check.
 ================
 */
-func TestGrassOfLifeCannotReviveGrabPet(t *testing.T) {
+func TestGrassOfLifeHasNoServerBandCheck(t *testing.T) {
 	c, refs := persistentSummonFixture()
 	rt, _ := newTestRuntime(c, refs)
 	useSummonerFixture(t, rt, c, 24, refs.staticItemSource["SUMMON_PICKUP"])
@@ -72,5 +76,8 @@ func TestGrassOfLifeCannotReviveGrabPet(t *testing.T) {
 		NativeFields: enterworld.NewNativeFields(map[string]float64{"canUse": 1})}
 	refs.staticItemSource[ref.Codename] = ref
 	c.MissionInventory = append(c.MissionInventory, enterworld.InventoryRow{Slot: 25, RefObjID: ref.RefObjID, Codename: ref.Codename, TypeFlags: ref.TypeFlags(), StackCount: 1})
-	assertItemUseRefusedUnchanged(t, rt, c, wire.NewWriter(4).U8(25).U16(ref.TypeFlags()).U8(24).Payload(), wire.ErrCodeCosRefused)
+	result := rt.HandleItemUse(testDivision, c, wire.NewWriter(4).U8(25).U16(ref.TypeFlags()).U8(24).Payload())
+	if len(result.Frames) == 0 || result.Frames[0].Payload[0] != 1 || pet.StateFlags&1 == 0 {
+		t.Fatalf("revival refused by band: %+v", result)
+	}
 }

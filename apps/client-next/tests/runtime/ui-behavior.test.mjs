@@ -4934,9 +4934,10 @@ test("an attack pet shows its mini window under the player mini window", () => {
 		f.state.gameplay.vitals = [ ...f.state.gameplay.vitals, { gid: 7, hp: 50, mp: 0 } ];
 		for ( let i = 0; i < 20; i++ ) f.ui.step( f.state, 1200 + i );
 		assert.ok( f.hasText( "Fang" ), "the selected grab pet still has its name" );
+		// 5823B0: a non-combat COS target keeps the NPC window's 168x4 gauge.
 		assert.ok(
-			!f.scenes.at( -1 ).quads.some( q => q.rect[1] === 44 && q.rect[3] === 4 ),
-			"a grab pet has no target health gauge even without spawn type metadata"
+			f.scenes.at( -1 ).quads.some( q => q.rect[1] === 44 && q.rect[3] === 4 ),
+			"a selected grab pet shows the native target gauge"
 		);
 	} finally {
 		f.dispose();
@@ -5008,11 +5009,21 @@ test("right-clicking a rental clock arms the yellow cursor and confirms the clic
 		assert.equal( f.ui.cursor(), 0xa6 );
 		assert.equal( sent.length, 0, "arming never picks a pet or spends the clock" );
 		f.ui.step( f.state, 2100 );
+		// 567290: any occupied slot opens the confirmation and clears the
+		// cursor; the server judges the target (an attack pet is refused there).
 		f.ui.event( { kind: "activate", id: "slot:15" } );
-		assert.equal( f.ui.cursor(), 0xa6, "an attack pet is not a renewal target" );
-		assert.equal( sent.length, 0 );
+		assert.equal( f.ui.cursor(), null );
+		for ( let t = 2200; t <= 2600; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		assert.ok( defined( scene ).controls.some( row => row.id === "cos-renew-confirm" ) );
+		f.ui.event( { kind: "activate", id: "cos-renew-confirm" } );
+		assert.deepEqual( sent.splice( 0 ).at( -1 ), {
+			kind: "gameplay",
+			command: { kind: "item-use", slot: 13, summonerSlot: 15 }
+		} );
+		f.ui.step( f.state, 2700 );
+		f.ui.event( { kind: "right-activate", id: "slot:13" } );
 		f.ui.event( { kind: "activate", id: "slot:14" } );
-		for ( let t = 2200; t <= 3000; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		for ( let t = 2800; t <= 3000; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
 		assert.ok( defined( scene ).controls.some( row => row.id === "cos-renew-confirm" ) );
 		assert.equal( sent.length, 0, "choosing a pet waits for confirmation" );
 		f.ui.event( { kind: "activate", id: "cos-renew-cancel" } );
