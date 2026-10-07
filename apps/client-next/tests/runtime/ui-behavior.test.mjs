@@ -4968,8 +4968,7 @@ test("the player panel draws native siege rank and guild status and removes them
 Reverse scroll prompt and map confirmation
 ================
 */
-test("reverse scroll choices admit native chrome and map markers dispatch an item use", async () => {
-	const { experimentalOptions } = await load( "src/engine/foundation/ui/experimental-options.ts" );
+test("reverse scroll choices admit native chrome and map markers dispatch an item use", () => {
 	const sent = [], f = uiFixture( command => sent.push( command ) );
 	try {
 		Object.assign( f.state.gameplay, {
@@ -4981,17 +4980,14 @@ test("reverse scroll choices admit native chrome and map markers dispatch an ite
 		for ( let t = 100; t <= 1600; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
 		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-choice:2" ) );
 		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-choice:3" ) );
-		assert.ok(
-			!defined( scene ).controls.some( row => row.id === "reverse-scroll-map" ),
-			"extension is off by default"
-		);
-		f.ui.event( { kind: "experimental-preferences", value: experimentalOptions( { reverseScrollMap: true } ) } );
-		scene = f.ui.step( f.state, 1700 ) ?? scene;
 		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-map" ) );
 		f.ui.event( { kind: "activate", id: "reverse-scroll-map" } );
 		for ( let t = 1800; t < 4000; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
 		scene = f.ui.step( f.state, 4000 ) ?? scene;
 		assert.ok( defined( scene ).controls.some( row => row.id === "reverse-scroll-point:1" ) );
+		const marker = f.scenes.at( -1 ).quads.find( q => q.texture?.endsWith( "/wmap_sign_huntingpoint.png" ) );
+		assert.ok( marker, "reverse destination artwork is admitted" );
+		assert.equal( marker.rotation, Math.PI / 2, "reverse pointers turn clockwise by 90 degrees" );
 		assert.ok(
 			!defined( scene ).controls.some( row => row.id === "reverse-scroll-cancel" ),
 			"map has no added Cancel button"

@@ -20,7 +20,6 @@ ExperimentalOptions
 export interface ExperimentalOptions {
 	readonly chatTimestamps: boolean;
 	readonly developerDiagnostics: boolean;
-	readonly reverseScrollMap: boolean;
 	// Video: renderer stages that deviate from the 2005 D3D9 look.
 	readonly postProcessing: boolean;
 	readonly anisotropicFiltering: boolean;
@@ -51,7 +50,6 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 	return {
 		chatTimestamps: enabled( "chatTimestamps" ),
 		developerDiagnostics: enabled( "developerDiagnostics" ),
-		reverseScrollMap: enabled( "reverseScrollMap" ),
 		postProcessing: enabled( "postProcessing" ),
 		anisotropicFiltering: enabled( "anisotropicFiltering" ),
 		heightFog: enabled( "heightFog" )

@@ -577,6 +577,8 @@ const MAX_REVERSE_SCROLL_POINTS = 4096;
 const MAP_MARKER_SIZE = 16;
 const REVERSE_REGION_SIZE = 1920;
 const MAP_REGION_SIZE = 192;
+// Later-client reference: hunting-point artwork faces right on the reverse map.
+export const REVERSE_SCROLL_MARKER_ROTATION = Math.PI / 2;
 export const REVERSE_SCROLL_MARKER = "/assets/images/Media_extracted/interface/worldmap/wmap_sign_huntingpoint.png";
 
 /*

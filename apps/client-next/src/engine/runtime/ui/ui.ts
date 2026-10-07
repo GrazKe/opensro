@@ -398,6 +398,7 @@ import {
 	worldMapImagePaths,
 	worldMapReversePoints,
 	REVERSE_SCROLL_MARKER,
+	REVERSE_SCROLL_MARKER_ROTATION,
 	worldMapDemand,
 	MAP_LOCAL_MARKER,
 	worldMapPageAt,
@@ -2948,7 +2949,6 @@ export function createUi(
 			if ( point ) mapTeleport.pickReverse( point );
 			dirty = true;
 		} else if ( id === "reverse-scroll-map" ) {
-			if ( !experimental.state().saved.reverseScrollMap ) return;
 			const slot = view.gameplay?.reverseScrollSlot;
 			if ( slot !== undefined ) {
 				mapTeleport.openReverse( slot );
@@ -8557,7 +8557,16 @@ export function createUi(
 							points: game.reverseScrollPoints ?? []
 						} );
 						for ( const { point, rect: r } of points ) {
-							image( r, REVERSE_SCROLL_MARKER, white, undefined, inner );
+							if ( resources.has( REVERSE_SCROLL_MARKER ) ) {
+								quads.push( {
+									rect: r,
+									texture: REVERSE_SCROLL_MARKER,
+									uv: [ 0, 0, 1, 1 ],
+									color: white,
+									clip: inner,
+									rotation: REVERSE_SCROLL_MARKER_ROTATION
+								} );
+							}
 							controls.push( {
 								id: "reverse-scroll-point:" + point.id,
 								label: point.name,
@@ -11013,8 +11022,7 @@ export function createUi(
 					controls = [];
 					blocks.push( full );
 					const admission = beginWindow(),
-						hasMap = experimental.state().saved.reverseScrollMap &&
-							(game.reverseScrollPoints?.length ?? 0) > 0,
+						hasMap = (game.reverseScrollPoints?.length ?? 0) > 0,
 						layout = reverseScrollLayout( w, h, hasMap ? 4 : 3 );
 					paths.push( ...partyProposalAssets() );
 					quads.push(

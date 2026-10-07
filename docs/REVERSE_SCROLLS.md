@@ -25,17 +25,16 @@ inference, documented in reverse_scroll.go; no new verified disassembly claim
 is made. The prior NPC gate/guide reverse-return flow remains available.
 
 The three-option map reference is from a later-version interface. Its point list
-is inferred from the existing catalog and marked port-only, not native. Both
-settings default off for upstream contribution:
+is inferred from the existing catalog and marked port-only, not native. The requested later-client map interface is always available when the server
+publishes destinations:
 
 - Server: set SRO_REVERSE_MAP=1 before deploying GameWorld. The Nomad deployer
   passes it into the job; the public reference catalog exposes bounded point IDs.
-- Client: Escape -> Experimental -> Developer -> Reverse scroll map -> Confirm.
-  This preference is saved in the browser.
+- Client: no Experimental preference is required. Reverse-map hunting-point
+  icons rotate 90 degrees clockwise to match the requested reference.
 
 The local start batch file and dev-env.ps1 enable the server flag for this user's
 requested configuration. These local launch settings are not part of the commit.
-The client preference must be confirmed once in each browser profile.
 
 Clients submit a point ID, never coordinates. Invalid IDs, missing recorded points,
 malformed choices, disabled map mode and refused uses preserve the scroll stack.
@@ -46,7 +45,7 @@ All client work is in existing files; no client source or test files were added.
 Behaviour tests cover both recorded choices, malformed/missing choices, duplicate
 uses, one-scroll consumption, cast completion, both map flag settings, town spawn
 agreement, outdoor unique filtering, catalog validation and map projection.
-The UI regression test covers the compact prompt, experimental opt-in, map points,
+The UI regression test covers the compact prompt, default map availability, clockwise markers, map points,
 No without an item-use request, and Yes dispatching the selected point ID.
 
 The Windows source gate requires a CGO C compiler for its race step. Existing

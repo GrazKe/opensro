@@ -80,11 +80,6 @@ export const EXPERIMENTAL_TABS: readonly { readonly title: string; readonly rows
 			id: "experimental-developer-diagnostics",
 			label: "Developer diagnostics",
 			description: "Show a diagnostics icon beside FPS."
-		}, {
-			key: "reverseScrollMap",
-			id: "experimental-reverse-scroll-map",
-			label: "Reverse scroll map",
-			description: "Later-version destinations, when enabled by the server."
 		} ]
 	}
 ];
