@@ -1,3 +1,10 @@
+/*
+===========================================================================
+
+cosground_test.go - pet inventory ownership, pickup arrival and gold routing
+
+===========================================================================
+*/
 package action
 
 import (
@@ -11,7 +18,13 @@ import (
 	"time"
 )
 
+/*
+================
+TestCOSGroundRoundTripAndOwnership
+================
+*/
 func TestCOSGroundRoundTripAndOwnership(t *testing.T) {
+	t.Setenv("SRO_PET_PACING", "1")
 	c := testCharacter()
 	refs := testCosSource(testItems())
 	refs.characters["PET"] = &enterworld.CharacterRef{Codename: "PET", RefObjID: 9, TidWord: 0x21c6, RunSpeed: 100}
@@ -64,11 +77,15 @@ func TestCOSGroundRoundTripAndOwnership(t *testing.T) {
 		t.Fatal("pickup granted before arrival")
 	}
 	rt.TickHook()(2200)
+	if len(c.ActiveCOS.Container.Rows) != 0 {
+		t.Fatal("slower pet granted pickup before arrival")
+	}
+	rt.TickHook()(2500)
 	if len(c.ActiveCOS.Container.Rows) != 1 || len(rt.Ground.All(testDivision)) != 0 || !reflect.DeepEqual(c.MissionInventory, bag) {
 		t.Fatal("arrival failed to grant into COS")
 	}
-	rt.Now = func() time.Time { return time.UnixMilli(2200) }
-	pose := rt.PetPresentation(testDivision, c.Name).World.LiveSpawnAt(2200)
+	rt.Now = func() time.Time { return time.UnixMilli(2500) }
+	pose := rt.PetPresentation(testDivision, c.Name).World.LiveSpawnAt(2500)
 	heap := rt.Ground.Add(testDivision, grounditem.Item{GoldAmount: 50, Position: grounditem.Point{RegionID: pose.RegionID, X: float32(pose.X), Z: float32(pose.Z)}, OwnerJID: 999})
 	q.GroundGID = heap.Gid
 	before := goldOf(c)

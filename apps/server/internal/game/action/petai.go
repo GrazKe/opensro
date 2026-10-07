@@ -22,6 +22,8 @@ import (
 	"opensro.online/server/internal/game/world/simulation"
 )
 
+const pickupPetBand uint16 = 4
+
 /*
 ================
 petOwnerKey
@@ -65,7 +67,8 @@ type petSession struct {
 	pickupCommand  bool
 	public         []wire.Frame
 	// combat is the attack pet's BATTLE state (petcombat.go); nil follows.
-	combat *petCombatIntent
+	combat   *petCombatIntent
+	recovery petRecovery
 	// others holds kill-settlement frames for other characters (a party's
 	// shared experience), drained with public by advancePets.
 	others []RecipientFrames
@@ -263,6 +266,7 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 	owner := rt.liveSpawn(simulation.WorldKey(key.division, snapshot.Name), snapshot, nowMs)
 	if state.follower == nil || state.follower.GID() != cos.GID || state.refObjID != cos.RefObjID {
 		state.follower = simulation.NewPetFollower(cos.GID, owner)
+		state.recovery = petRecovery{}
 		state.generation++
 		state.refObjID = cos.RefObjID
 	}
@@ -274,7 +278,11 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 	}
 	if rt.companionMovementBlocked(key.division, snapshot, cos) {
 		rt.cancelPetCombat(key, state, nowMs)
+		state.recovery = petRecovery{}
 		return state.follower.Stop(nowMs)
+	}
+	if frames, recovered := rt.recoverPet(petRecoveryStep{key: key, state: state, pet: cos, owner: owner, nowMs: nowMs}); recovered {
+		return frames
 	}
 	block := rt.cosAbnormal(key.division, snapshot.Name, cos.GID)
 	walk, run := cosParameter(ref, cos, block, movementWalkParameter), cosParameter(ref, cos, block, movementRunParameter)
@@ -541,6 +549,7 @@ func (rt *Runtime) relocateReturningPet(division string, c *enterworld.Character
 		state.pickup = nil
 		state.pickupCommand = false
 		state.public = nil
+		state.recovery = petRecovery{}
 		state.generation++
 		state.follower = nil
 		if cos := c.CompanionByGID(key.gid); cos != nil {
@@ -614,7 +623,7 @@ func (rt *Runtime) companionTargets(division string, ownerGID uint32, nowMs int6
 	}
 	var out []simulation.CompanionTarget
 	for _, pet := range rt.companionPresentations(division, owner.Name) {
-		if pet.Mounted || pet.LifeState == wire.LifeStateDead {
+		if pet.Mounted || pet.LifeState == wire.LifeStateDead || pet.Row.Band == uint8(pickupPetBand) {
 			continue
 		}
 		var record enterworld.CharacterCOS

@@ -110,6 +110,10 @@ protection is its owner's (COS+0x1CD8).
 ================
 */
 func ordinaryCompanionHostility(actor monster.Instance, companion playerPose) bool {
+	// Pickup companions are non-combat actors, including remembered targets.
+	if companion.Band == pickupCOSBand {
+		return false
+	}
 	observer := actor.Observer()
 	if actor.Abnormal != nil {
 		fear := actor.Abnormal.Slots[abnormal.Fear]
@@ -309,6 +313,7 @@ func eligiblePlayerByGid(actor monster.Instance, players []playerPose, gid uint3
 
 // fellowCOSBand is CGObj_IsFellowCOS's band (TypeID 4 = 5, 483980).
 const fellowCOSBand = 5
+const pickupCOSBand = 4
 
 /*
 ================

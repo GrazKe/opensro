@@ -24,6 +24,7 @@ export interface ExperimentalOptions {
 	readonly postProcessing: boolean;
 	readonly anisotropicFiltering: boolean;
 	readonly heightFog: boolean;
+	readonly smallerGrabPets: boolean;
 }
 
 /*
@@ -52,7 +53,8 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		developerDiagnostics: enabled( "developerDiagnostics" ),
 		postProcessing: enabled( "postProcessing" ),
 		anisotropicFiltering: enabled( "anisotropicFiltering" ),
-		heightFog: enabled( "heightFog" )
+		heightFog: enabled( "heightFog" ),
+		smallerGrabPets: enabled( "smallerGrabPets" )
 	};
 }
 

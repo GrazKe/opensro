@@ -181,6 +181,10 @@ owner's equipment can neither shield nor weaken a pet.
 ================
 */
 func (rt *Runtime) monsterStrikeCOS(in monsterStrikeInput, owner *enterworld.Character, pet *enterworld.CharacterCOS, ref *enterworld.CharacterRef, pose simulation.Spawn) monsterStrikeOutcome {
+	// Recheck at impact: a stale cast or area victim cannot harm a grab pet.
+	if ref.TidWord>>11 == pickupPetBand {
+		return monsterStrikeOutcome{alive: true, refusal: simulation.MonsterAttackCommandRejected}
+	}
 	divisionID, instance, skill, nowMs := in.division, in.instance, in.skill, in.now
 	out := monsterStrikeOutcome{alive: true}
 	ownerBlock := rt.newCosAbnormalOwnerForPet(divisionID, owner, pet, nowMs)

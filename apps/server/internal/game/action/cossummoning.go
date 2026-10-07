@@ -162,7 +162,7 @@ func (rt *Runtime) usePersistentSummoner(use persistentSummonUse, result *OpResu
 	spawn := wire.Frame{Opcode: wire.OpSingleObjectSpawn, Payload: wire.EncodeCosSpawnBand2(wire.CosSpawnBand2{
 		Band: uint8(ref.TidWord >> 11), RefObjID: ref.RefObjID, Gid: gid, BodyStatus: pet.NativeBodyStatus,
 		Position: wire.Position{RegionID: pose.RegionID, X: float32(pose.X), Y: float32(pose.Y), Z: float32(pose.Z), Heading: pose.Angle},
-		Walk:     ref.WalkSpeed, Run: ref.RunSpeed, Scale: ref.Scale, Name: pet.Name, OwnerName: c.Name, OwnerGid: enterworld.ObjectIDForCharacter(c),
+		Walk:     cosParameter(ref, pet, nil, movementWalkParameter), Run: cosParameter(ref, pet, nil, movementRunParameter), Scale: ref.Scale, Name: pet.Name, OwnerName: c.Name, OwnerGid: enterworld.ObjectIDForCharacter(c),
 		// CICCos_DeserializeSpawnSubState (854CD0): 1 is a fresh summon.
 		State: cosSpawnFresh,
 	})}

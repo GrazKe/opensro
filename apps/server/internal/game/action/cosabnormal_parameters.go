@@ -101,6 +101,11 @@ func cosParameter(ref *enterworld.CharacterRef, pet *enterworld.CharacterCOS, bl
 		log.WithError(err).WithField("param", id).Error("COS abnormal parameter projection failed")
 		return 0
 	}
+	// Local pet pacing policy applies to every speed projection, including
+	// status refreshes and late joins; vehicles retain their authored speed.
+	if id == movementRunParameter && ref != nil {
+		value = companion.RunSpeed(ref.TidWord>>11, value)
+	}
 	return value
 }
 

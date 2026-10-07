@@ -25,7 +25,8 @@ const OFF = Object.freeze( {
 	developerDiagnostics: false,
 	postProcessing: false,
 	anisotropicFiltering: false,
-	heightFog: false
+	heightFog: false,
+	smallerGrabPets: false
 } );
 
 test("only an explicit boolean enables chat timestamps", () => {

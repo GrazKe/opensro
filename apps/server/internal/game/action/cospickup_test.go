@@ -25,6 +25,7 @@ TestCosPickupCommandCompletesThroughInventoryAuthority
 ================
 */
 func TestCosPickupCommandCompletesThroughInventoryAuthority(t *testing.T) {
+	t.Setenv("SRO_PET_PACING", "1")
 	for _, distance := range []float32{0, 100} {
 		t.Run(time.Duration(distance).String(), func(t *testing.T) {
 			c := testCharacter()
@@ -50,7 +51,11 @@ func TestCosPickupCommandCompletesThroughInventoryAuthority(t *testing.T) {
 					t.Fatal("approach acknowledged before arrival", result)
 				}
 				rt.TickHook()(1100)
-				for _, batch := range rt.TickHook()(2200) {
+				rt.TickHook()(2200)
+				if goldOf(c) != before {
+					t.Fatal("slower pet granted gold before arrival")
+				}
+				for _, batch := range rt.TickHook()(2500) {
 					for _, frame := range batch.Frames {
 						frames = append(frames, wire.Frame{Opcode: frame.Opcode, Payload: frame.Payload})
 					}

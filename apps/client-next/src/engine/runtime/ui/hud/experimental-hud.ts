@@ -57,6 +57,12 @@ export const EXPERIMENTAL_TABS: readonly { readonly title: string; readonly rows
 				description: "Sharper ground and walls at shallow angles."
 			},
 			{
+				key: "smallerGrabPets",
+				id: "experimental-smaller-grab-pets",
+				label: "Smaller grab pets",
+				description: "Reduce grab pet models by 25%."
+			},
+			{
 				key: "heightFog",
 				id: "experimental-height-fog",
 				label: "Height fog",

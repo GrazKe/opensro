@@ -16,6 +16,7 @@ import { createModelAnimation } from "@/engine/foundation/animation/model-animat
 import { type AnimationDispatch, createAnimationDispatch } from "@/engine/foundation/animation/animation-dispatch";
 import { animationActivation, type AnimationActivation } from "@/engine/foundation/animation/animation-activation";
 import { blindableCharacter } from "@/engine/foundation/ui/name-visibility";
+import { companionModelScale } from "@/engine/foundation/rendering/companion-scale";
 import { monsterScale } from "@/engine/foundation/rendering/monster-scale";
 import { postureLayers } from "@/engine/foundation/animation/posture";
 import { oneShotLayers } from "@/engine/foundation/animation/one-shot-layers";
@@ -36,7 +37,16 @@ createActorMotion
 ================
 */
 export function createActorMotion( owner: ActorOwner ) {
+	let smallerGrabPets = false;
 	return {
+		/*
+		================
+		experimental
+		================
+		*/
+		experimental( enabled: boolean ) {
+			smallerGrabPets = enabled;
+		},
 		/*
 		================
 		present
@@ -685,6 +695,8 @@ export function createActorMotion( owner: ActorOwner ) {
 			const appearance = effects.appearance( entity.gid ),
 				baseScale = entity.kind === "monster" ?
 					monsterScale( entity.rarity ?? 0, entity.tidWord ?? 0, resource.scalePercent ) :
+					entity.kind === "cos" ?
+					companionModelScale( entity.tidWord ?? 0, smallerGrabPets ) :
 					1;
 			const previewWeapon = wornEquipment( entity, gameplay ).find( item => item.slot === 6 ),
 				disguise = referenceAppearances.get( entity.gid ),

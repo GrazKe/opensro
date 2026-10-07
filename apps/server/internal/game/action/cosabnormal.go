@@ -623,7 +623,7 @@ func (rt *Runtime) monsterHitSummonedCOS(divisionID string, instance monster.Ins
 	}
 	result.TargetAlive = true
 	ref, validRef := rt.cosReference(snapshot.CompanionByGID(pet.GID))
-	if !validRef {
+	if !validRef || ref.TidWord>>11 == pickupPetBand {
 		return result
 	}
 	mover, exists := rt.Monsters.Mover(divisionID, instance.Gid)

@@ -32,6 +32,14 @@ export function createActorPresentation( owner: ActorOwner ) {
 	return {
 		/*
 		================
+		experimental
+		================
+		*/
+		experimental( enabled: boolean ) {
+			actorMotion.experimental( enabled );
+		},
+		/*
+		================
 		present
 
 		Runs each selected entity through appearance.resolve, then motion.present,
