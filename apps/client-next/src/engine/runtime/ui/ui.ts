@@ -27,7 +27,7 @@ const STALL_CHAT_TEXT = "stall-chat-text";
 // CIFChatModule rows are 16 pixels; the input row sits under them.
 const STALL_CHAT_ROW = 16;
 import { ACTION_FORTRESS_RETURN } from "@/engine/foundation/gameplay/fortress-return";
-import { companionItemTargetCommand } from "@/engine/foundation/gameplay/cos-item-use";
+import { companionItemTargetCommand, isCompanionLeaseItem } from "@/engine/foundation/gameplay/cos-item-use";
 import {
 	createStoragePanel,
 	firstFreeSlot,
@@ -1464,6 +1464,15 @@ export function createUi(
 	function useInventorySlot( slot: number ): boolean {
 		const game = view?.gameplay;
 		if ( !game ) return false;
+		const item = game.inventory.find( row => row.slot === slot );
+		if ( item && slot >= 13 && !game.inventoryPending && isCompanionLeaseItem( item.typeFlags ) ) {
+			carriedItem = null;
+			carriedShortcut = null;
+			inventorySlot = -1;
+			repairHud.disarm();
+			cosHud.armClock( item );
+			return true;
+		}
 		const command = itemActivation( slot, game.inventory, game.inventorySlotCount, game.inventoryPending );
 		if ( !command ) return false;
 		sendGameplay( command );
@@ -3836,6 +3845,47 @@ export function createUi(
 				}
 				if ( event.kind !== "hover" ) return;
 			}
+			if ( cosHud.renewal() !== null ) {
+				if (
+					event.kind === "key" && event.code === "Escape" ||
+					event.kind === "activate" && event.id === "cos-renew-cancel"
+				) {
+					cosHud.takeRenewal();
+					dirty = true;
+					return;
+				}
+				if (
+					event.kind === "key" && event.code === "Enter" && !composing ||
+					event.kind === "activate" && event.id === "cos-renew-confirm"
+				) {
+					const command = cosHud.takeRenewal();
+					if ( command && view?.session?.phase === "world" && !view.gameplay?.inventoryPending ) {
+						sendGameplay( command );
+					}
+					dirty = true;
+					return;
+				}
+				if ( event.kind !== "hover" ) return;
+			}
+			if ( cosHud.clockCursor() !== null ) {
+				if ( event.kind === "right-activate" || event.kind === "key" && event.code === "Escape" ) {
+					cosHud.takeRenewal();
+					dirty = true;
+					return;
+				}
+				if ( event.kind === "activate" && event.id.startsWith( "slot:" ) ) {
+					if ( controls.some( c => c.id === event.id && !c.disabled ) ) {
+						cosHud.chooseClockTarget(
+							view?.gameplay?.inventory.find( item => item.slot === Number( event.id.slice( 5 ) ) )
+						);
+						dirty = true;
+					}
+					return;
+				}
+				if (
+					event.kind === "drag" || event.kind === "drag-end" || event.kind === "double-activate"
+				) return;
+			}
 			if ( repairHud.armed() ) {
 				// 564046 checks the cursor mode before right-button item use.
 				if ( event.kind === "right-activate" || event.kind === "key" && event.code === "Escape" ) {
@@ -5492,7 +5542,7 @@ export function createUi(
 		================
 		*/
 		cursor(): import("@/engine/foundation/ui/world-cursor").WorldCursor | null {
-			return repairHud.cursor();
+			return cosHud.clockCursor() ?? repairHud.cursor();
 		},
 		/*
 		================
@@ -5501,6 +5551,12 @@ export function createUi(
 		*/
 		step( next: UiView, now = 0, probe?: UiFrameProbe ): UiSemantics | null {
 			quickslotTime = next.simulationTimeMs ?? now;
+			if (
+				cosHud.reconcileClock(
+					next.gameplay?.inventory ?? [],
+					next.session?.phase === "world" && !next.travel && panel === "Inventory"
+				)
+			) dirty = true;
 			if (
 				(repairHud.armed() || repairHud.confirmCost() !== null) &&
 				(next.session?.phase !== "world" || next.travel || !next.gameplay?.shop ||
@@ -6862,8 +6918,9 @@ export function createUi(
 					disabled,
 					selected,
 					rightActivate: !!item && (id.startsWith( "slot:" ) || id.startsWith( "storage-slot:" )),
-					draggable: !!item && !repairHud.armed(),
-					carry: !repairHud.armed() && !!item && ITEM_SLOT_PREFIXES.some( prefix => id.startsWith( prefix ) )
+					draggable: !!item && !repairHud.armed() && cosHud.clockCursor() === null,
+					carry: !repairHud.armed() && cosHud.clockCursor() === null && !!item &&
+						ITEM_SLOT_PREFIXES.some( prefix => id.startsWith( prefix ) )
 				} );
 				itemCount( item, r );
 			}
@@ -15397,7 +15454,7 @@ export function createUi(
 					...layout.refuse.slice( 0, 3 ) as [number, number, number]
 				);
 			}
-			if ( worldVisible && cosHud.cleanConfirm() !== null ) {
+			if ( worldVisible && (cosHud.cleanConfirm() !== null || cosHud.renewal() !== null) ) {
 				// 6A2350 case 5 raises the type 0xD box with the two
 				// UIIT_MSG_COS_CLEAN_CONFIRM lines before a transport is destroyed.
 				const layout = guildProposalLayout( w, h );
@@ -15416,22 +15473,36 @@ export function createUi(
 						hAlign: 1,
 						vAlign: 0
 					} ),
-					...text.quads( hudCopy( "UIIT_MSG_COS_CLEAN_CONFIRM1" ), layout.name, full, white, {
-						hAlign: 1,
-						vAlign: 0
-					} ),
-					...text.quads( hudCopy( "UIIT_MSG_COS_CLEAN_CONFIRM2" ), layout.question, full, white, {
-						hAlign: 1,
-						vAlign: 0
-					} )
+					...text.quads(
+						hudCopy( cosHud.renewal() ? "UIIT_CTL_WNETWORK_COS_EXTEND" : "UIIT_MSG_COS_CLEAN_CONFIRM1" ),
+						layout.name,
+						full,
+						white,
+						{
+							hAlign: 1,
+							vAlign: 0
+						}
+					),
+					...text.quads(
+						hudCopy(
+							cosHud.renewal() ? "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE" : "UIIT_MSG_COS_CLEAN_CONFIRM2"
+						),
+						layout.question,
+						full,
+						white,
+						{
+							hAlign: 1,
+							vAlign: 0
+						}
+					)
 				);
 				button(
-					"cos-clean-confirm",
+					cosHud.renewal() ? "cos-renew-confirm" : "cos-clean-confirm",
 					hudCopy( "UIIT_CTL_YES" ),
 					...layout.accept.slice( 0, 3 ) as [number, number, number]
 				);
 				button(
-					"cos-clean-cancel",
+					cosHud.renewal() ? "cos-renew-cancel" : "cos-clean-cancel",
 					hudCopy( "UIIT_CTL_NO" ),
 					...layout.refuse.slice( 0, 3 ) as [number, number, number]
 				);

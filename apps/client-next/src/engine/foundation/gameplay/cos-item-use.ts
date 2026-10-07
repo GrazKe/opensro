@@ -108,10 +108,18 @@ export function cosItemUseTail(
 
 /*
 ================
-companionItemTargetCommand
+isCompanionLeaseItem
 
-Native 6961B0 accepts a dragged revival/extension item on a summoner slot.
-Click-carry and drag-drop enter the same inventory intent route.
+561D50 checks the inventory-targetable mall family; subtype 12 is the clock.
+================
+*/
+export function isCompanionLeaseItem( flags: number ): boolean {
+	return (flags & 0x7c) === 0x6c && (flags >>> 7 & 15) === 13 && (flags >>> 11 & 31) === 12;
+}
+
+/*
+================
+companionItemTargetCommand
 ================
 */
 export function companionItemTargetCommand(

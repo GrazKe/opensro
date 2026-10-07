@@ -4978,3 +4978,61 @@ test("the player panel draws native siege rank and guild status and removes them
 		f.dispose();
 	}
 });
+
+/*
+================
+Clock of Reincarnation targets a pet through the retail yellow cursor
+================
+*/
+test("right-clicking a rental clock arms the yellow cursor and confirms the clicked grab pet", () => {
+	const sent = [], f = uiFixture( command => sent.push( command ) );
+	try {
+		const clock = {
+			slot: 13,
+			refObjId: 8985,
+			typeFlags: 0x66ec,
+			quantity: 1,
+			plus: 0,
+			durability: 0,
+			variance: "0",
+			magic: []
+		};
+		const pet = { ...clock, slot: 14, refObjId: 901, typeFlags: 0x10cc, summon: { state: 4, rentals: [] } };
+		f.state.gameplay.inventory = [ clock, pet, { ...pet, slot: 15, typeFlags: 0x08cc } ];
+		f.state.gameplay.inventorySlotCount = 45;
+		f.ui.step( f.state, 0 );
+		f.ui.event( { kind: "key", code: "KeyI" } );
+		let scene;
+		for ( let t = 100; t <= 2000; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		f.ui.event( { kind: "right-activate", id: "slot:13" } );
+		assert.equal( f.ui.cursor(), 0xa6 );
+		assert.equal( sent.length, 0, "arming never picks a pet or spends the clock" );
+		f.ui.step( f.state, 2100 );
+		f.ui.event( { kind: "activate", id: "slot:15" } );
+		assert.equal( f.ui.cursor(), 0xa6, "an attack pet is not a renewal target" );
+		assert.equal( sent.length, 0 );
+		f.ui.event( { kind: "activate", id: "slot:14" } );
+		for ( let t = 2200; t <= 3000; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
+		assert.ok( defined( scene ).controls.some( row => row.id === "cos-renew-confirm" ) );
+		assert.equal( sent.length, 0, "choosing a pet waits for confirmation" );
+		f.ui.event( { kind: "activate", id: "cos-renew-cancel" } );
+		f.ui.step( f.state, 3100 );
+		assert.equal( sent.length, 0 );
+		f.ui.event( { kind: "right-activate", id: "slot:13" } );
+		f.ui.event( { kind: "activate", id: "slot:14" } );
+		f.ui.step( f.state, 3200 );
+		f.ui.event( { kind: "activate", id: "cos-renew-confirm" } );
+		assert.deepEqual( sent.at( -1 ), {
+			kind: "gameplay",
+			command: { kind: "item-use", slot: 13, summonerSlot: 14 }
+		} );
+		assert.equal( f.ui.cursor(), null );
+		f.ui.step( f.state, 3300 );
+		f.ui.event( { kind: "right-activate", id: "slot:13" } );
+		f.ui.event( { kind: "key", code: "Escape" } );
+		assert.equal( f.ui.cursor(), null );
+		assert.equal( sent.length, 1, "Escape never sends a renewal" );
+	} finally {
+		f.dispose();
+	}
+});

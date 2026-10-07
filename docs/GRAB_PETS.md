@@ -69,7 +69,9 @@ follows the original server.
 
 ## Clock of Reincarnation
 
-Drag the clock onto a previously summoned grab-pet item in your bag. The
+Right-click the clock to arm the retail yellow cursor (A6), then left-click
+a previously summoned grab-pet item in your bag and confirm Yes. Escape or
+right-click cancels targeting without consuming the clock. The
 standard ITEM_COS_P_EXTENSION adds 28 days; ITEM_COS_P_EXTENSION_1D adds one
 day, using the retail item parameter in minutes. A valid use consumes one
 clock and adds time to max(current expiry, now). It preserves the pet name,
