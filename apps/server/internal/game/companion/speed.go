@@ -10,6 +10,8 @@ package companion
 import (
 	"os"
 	"strings"
+
+	"opensro.online/server/internal/domain"
 )
 
 // EnvPetPacing is port-only, not native; unset retains authored movement.
@@ -20,10 +22,32 @@ const EnvPetRecovery = "SRO_PET_RECOVERY"
 
 /*
 ================
-PolicyEnabled
+Policies
+
+The port-only pet rules, read once at startup and handed to the action
+runtime. The zero value is native: authored speeds, no relocation.
 ================
 */
-func PolicyEnabled(name string) bool {
+type Policies struct {
+	Pacing   bool
+	Recovery bool
+}
+
+/*
+================
+PoliciesFromEnv
+================
+*/
+func PoliciesFromEnv() Policies {
+	return Policies{Pacing: policyEnabled(EnvPetPacing), Recovery: policyEnabled(EnvPetRecovery)}
+}
+
+/*
+================
+policyEnabled
+================
+*/
+func policyEnabled(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
 	case "1", "true", "on":
 		return true
@@ -38,12 +62,14 @@ const petRunSpeedScale = 0.8
 ================
 RunSpeed
 
-Local gameplay policy: grab and growth pets run twenty percent slower.
-Vehicle and captured quest actor speeds retain their authored values.
+Port-only, not native: with Pacing, grab and growth pets move at four
+fifths of their projected run speed. It scales a speed the pet is given to
+move with, never the native parameter the follow and battle rules compare
+(548A30). Vehicle and captured quest actor speeds keep their values.
 ================
 */
-func RunSpeed(band uint16, speed float32) float32 {
-	if PolicyEnabled(EnvPetPacing) && (band == 3 || band == 4) {
+func (p Policies) RunSpeed(band uint16, speed float32) float32 {
+	if p.Pacing && (band == domain.GrowthPetBand || band == domain.PickupPetBand) {
 		return speed * petRunSpeedScale
 	}
 	return speed

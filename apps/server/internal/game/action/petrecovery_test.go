@@ -23,8 +23,6 @@ TestPetRecoveryProgressAndIdle
 ================
 */
 func TestPetRecoveryProgressAndIdle(t *testing.T) {
-	t.Setenv(companion.EnvPetRecovery, "1")
-	t.Setenv(companion.EnvPetPacing, "1")
 	owner := simulation.Spawn{RegionID: 0x62aa, X: 400}
 	pose := simulation.Spawn{RegionID: owner.RegionID}
 	var recovery petRecovery
@@ -53,10 +51,9 @@ TestPetTickRecoversBlockedPickupAndAcknowledgesCancellation
 ================
 */
 func TestPetTickRecoversBlockedPickupAndAcknowledgesCancellation(t *testing.T) {
-	t.Setenv(companion.EnvPetRecovery, "1")
-	t.Setenv(companion.EnvPetPacing, "1")
 	c, refs := persistentSummonFixture()
 	rt, _ := newTestRuntime(c, refs)
+	rt.PetPolicies = companion.Policies{Pacing: true, Recovery: true}
 	rt.BindPetSession(testDivision, c, 101)
 	useSummonerFixture(t, rt, c, 24, refs.staticItemSource["SUMMON_PICKUP"])
 	pet := c.Companions()[0]
@@ -86,10 +83,9 @@ TestPetRecoveryKeepsIdentityAndCancelsCombat
 ================
 */
 func TestPetRecoveryKeepsIdentityAndCancelsCombat(t *testing.T) {
-	t.Setenv(companion.EnvPetRecovery, "1")
-	t.Setenv(companion.EnvPetPacing, "1")
 	c, refs := persistentSummonFixture()
 	rt, _ := newTestRuntime(c, refs)
+	rt.PetPolicies = companion.Policies{Pacing: true, Recovery: true}
 	rt.CompanionRoll = func() (uint32, error) { return 0, nil }
 	owner := simulation.Spawn{RegionID: 0x62aa, X: 1500}
 	for _, name := range []string{"ATTACK", "PICKUP"} {
@@ -109,23 +105,53 @@ func TestPetRecoveryKeepsIdentityAndCancelsCombat(t *testing.T) {
 /*
 ================
 TestPetRunSpeedPolicyLeavesVehiclesAndWalkingAlone
+
+Pacing slows only the run a grab or growth pet moves with; the native
+parameter the follow and battle rules compare (548A30) keeps its value.
 ================
 */
 func TestPetRunSpeedPolicyLeavesVehiclesAndWalkingAlone(t *testing.T) {
-	t.Setenv(companion.EnvPetRecovery, "1")
-	t.Setenv(companion.EnvPetPacing, "1")
+	rt := &Runtime{PetPolicies: companion.Policies{Pacing: true}}
 	for _, band := range []uint16{1, 2, 3, 4, 6} {
 		ref := &enterworld.CharacterRef{TidWord: 0x1c6 | band<<11, RunSpeed: 100, WalkSpeed: 20}
 		want := float32(100)
 		if band == 3 || band == 4 {
 			want = 80
 		}
-		if got := cosParameter(ref, nil, nil, movementRunParameter); got != want {
-			t.Fatalf("band %d run %v, want %v", band, got, want)
+		walk, run := rt.cosMovementSpeeds(ref, nil, nil)
+		if run != want || walk != 20 {
+			t.Fatalf("band %d moves at %v/%v, want 20/%v", band, walk, run, want)
 		}
-		if got := cosParameter(ref, nil, nil, movementWalkParameter); got != 20 {
-			t.Fatalf("band %d walking changed: %v", band, got)
+		if got := cosParameter(ref, nil, nil, movementRunParameter); got != 100 {
+			t.Fatalf("band %d native run parameter paced to %v", band, got)
 		}
+	}
+}
+
+/*
+================
+TestPacedFollowSpeedMatchesNativeAtFullFactor
+
+A paced pet already at its native full speed installs nothing: the battle
+reset (548A30) compares the native parameter, not the paced one, so it
+does not resend the speed every tick.
+================
+*/
+func TestPacedFollowSpeedMatchesNativeAtFullFactor(t *testing.T) {
+	c, refs := persistentSummonFixture()
+	rt, _ := newTestRuntime(c, refs)
+	rt.PetPolicies.Pacing = true
+	ref := refs.characters["ATTACK"]
+	pet := &enterworld.CharacterCOS{GID: 42, Codename: "ATTACK", RefObjID: ref.RefObjID, CurrentHP: 100, Summoned: true}
+	run := cosParameter(ref, pet, nil, movementRunParameter)
+	if run < ref.RunSpeed {
+		t.Fatalf("native run %v below authored %v: the battle reset would fire", run, ref.RunSpeed)
+	}
+	state := &petSession{follower: simulation.NewPetFollower(pet.GID, simulation.Spawn{RegionID: 0x62aa}), character: c}
+	step := petCombatStep{key: petOwnerKey{division: testDivision, name: strings.ToLower(c.Name), gid: pet.GID}, state: state,
+		snapshot: c, pet: pet, ref: ref, run: run, nowMs: 1000}
+	if frames := rt.setCompanionFollowSpeed(step, 100); len(frames) != 0 {
+		t.Fatal("full factor resent the follow speed", frames)
 	}
 }
 
@@ -137,11 +163,19 @@ TestPetCustomPoliciesDefaultOff
 func TestPetCustomPoliciesDefaultOff(t *testing.T) {
 	t.Setenv(companion.EnvPetRecovery, "")
 	t.Setenv(companion.EnvPetPacing, "")
-	if companion.RunSpeed(4, 100) != 100 {
-		t.Fatal("default pet speed changed")
+	if policies := companion.PoliciesFromEnv(); policies != (companion.Policies{}) {
+		t.Fatalf("unset environment enabled %+v", policies)
+	}
+	t.Setenv(companion.EnvPetRecovery, "on")
+	t.Setenv(companion.EnvPetPacing, "1")
+	if policies := companion.PoliciesFromEnv(); policies != (companion.Policies{Pacing: true, Recovery: true}) {
+		t.Fatalf("set environment read as %+v", policies)
 	}
 	c, refs := persistentSummonFixture()
 	rt, _ := newTestRuntime(c, refs)
+	if rt.PetPolicies != (companion.Policies{}) || rt.PetPolicies.RunSpeed(4, 100) != 100 {
+		t.Fatal("a new runtime is not native")
+	}
 	ref := refs.characters["PICKUP"]
 	pet := &enterworld.CharacterCOS{GID: 42, Codename: "PICKUP", RefObjID: ref.RefObjID, CurrentHP: 100}
 	state := &petSession{follower: simulation.NewPetFollower(pet.GID, simulation.Spawn{RegionID: 0x62aa}), character: c}

@@ -214,7 +214,7 @@ import {
 import { isSkinChangeScroll, skinDraftRange, type SkinDraftKey } from "@/engine/foundation/gameplay/skin-change";
 import { repairAllCost } from "@/engine/foundation/gameplay/repair";
 import { createSlotEffectClock } from "./hud/slot-effects";
-import { itemSlotOverlays, itemSlotWash, itemSlotBorder, slotSeed } from "@/engine/foundation/ui/item-slot-effects";
+import { itemSlotOverlays, itemSlotWash, slotSeed } from "@/engine/foundation/ui/item-slot-effects";
 import {
 	COS_CLASS_ATTACK,
 	COS_CLASS_GUILD,
@@ -6818,14 +6818,6 @@ export function createUi(
 				// the inventory and equipment slots.
 				const wash = itemSlotWash( owned );
 				if ( wash ) rect( r, wash );
-				const border = itemSlotBorder( owned );
-				if ( border ) {
-					const [x, y, width, height] = r, edge = 1;
-					rect( [ x, y, width, edge ], border );
-					rect( [ x, y + height - edge, width, edge ], border );
-					rect( [ x, y, edge, height ], border );
-					rect( [ x + width - edge, y, edge, height ], border );
-				}
 				const flashes = id.startsWith( "slot:" ) ?
 					(game?.itemFlashes ?? []).filter( f => f.slot === owned.slot ) :
 					[];

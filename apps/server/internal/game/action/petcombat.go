@@ -213,7 +213,7 @@ func (rt *Runtime) advancePetCombat(step petCombatStep) (frames []simulation.Fra
 	at := step.state.follower.Position(step.nowMs)
 	if intent.castToken == 0 && !spacing.Contains(at, targetAt) {
 		intent.pursuing = true
-		return step.state.follower.Approach(targetAt, float64(step.run), step.nowMs, spacing.StandOffRadius(), step.constraint), true
+		return step.state.follower.Approach(targetAt, float64(rt.cosPacedRun(step.ref, step.run)), step.nowMs, spacing.StandOffRadius(), step.constraint), true
 	}
 	intent.pursuing = false
 	frames = step.state.follower.Stop(step.nowMs)

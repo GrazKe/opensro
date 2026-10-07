@@ -15,7 +15,6 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"opensro.online/server/internal/domain"
-	"opensro.online/server/internal/game/companion"
 	"opensro.online/server/internal/game/item/wire"
 )
 
@@ -379,7 +378,7 @@ func buildBootstrapPackets(deps *Deps, divisionID string, character *Character, 
 			if ref.TidWord>>11 == domain.MercenaryBand {
 				ownerName, holdType, pvpState = mercenaryGuildName, DressedJob(character), character.PVPState()
 			}
-			walk, run := ref.WalkSpeed, companion.RunSpeed(ref.TidWord>>11, ref.RunSpeed)
+			walk, run := ref.WalkSpeed, ref.RunSpeed
 			if deps.EntryCompanionMovementSpeeds != nil {
 				walk, run = deps.EntryCompanionMovementSpeeds(divisionID, character, cos)
 			}

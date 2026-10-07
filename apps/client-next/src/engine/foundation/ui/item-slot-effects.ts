@@ -41,28 +41,21 @@ interface SummonerSlotItem {
 ================
 summonerSlotState
 
-Pickup rental expiry is independent of the retained alive bit. The server
-publishes zero rental time on expiry; preserve dormant attack-pet icons.
+Pickup rental expiry is independent of the retained alive bit. A timed
+rental whose time is spent shows dead, whatever its state:
+CIFSlotWithHelp_OnStateTimer (555110) applies rent state 4 once
+CSOItem_ConsumeRentTime reaches zero. Only pickup summoners carry a rental
+time (inventory-item.ts), so attack-pet icons keep their own state.
 ================
 */
 function summonerSlotState( item: SummonerSlotItem | undefined ): number | undefined {
 	const summon = item?.summon;
-	if ( summon && summon.state !== 1 && summon.remainingSeconds !== undefined && summon.remainingSeconds <= 0 ) {
+	if ( summon && summon.remainingSeconds !== undefined && summon.remainingSeconds <= 0 ) {
 		return RENT_DEAD;
 	}
 	return summon?.state;
 }
 
-/*
-================
-itemSlotBorder
-
-A steady yellow edge makes the active item readable between glow frames.
-================
-*/
-export function itemSlotBorder( item: SummonerSlotItem | undefined ): readonly [number, number, number, number] | null {
-	return summonerSlotState( item ) === RENT_SUMMONED ? [ 1, 0.85, 0, 1 ] : null;
-}
 const RARE_FRAMES = 32, RARE_COLUMNS = 8, RARE_ROWS = 4, RARE_STEP_MS = 40;
 const GLOW_FRAMES = 9, GLOW_STEP_MS = 50;
 const LIFE_FRAMES = 8, LIFE_STEP_MS = 80;

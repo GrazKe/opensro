@@ -10,6 +10,7 @@ package simulation
 
 import (
 	"math"
+	"opensro.online/server/internal/domain"
 	"opensro.online/server/internal/game/abnormal"
 	"sort"
 
@@ -110,8 +111,9 @@ protection is its owner's (COS+0x1CD8).
 ================
 */
 func ordinaryCompanionHostility(actor monster.Instance, companion playerPose) bool {
-	// Pickup companions are non-combat actors, including remembered targets.
-	if companion.Band == pickupCOSBand {
+	// 5299E0 returns 0 first for a grab pet: its target's slot 0x43C is
+	// CGObj_IsPickPetCOS (483930). Remembered targets are refused the same way.
+	if companion.Band == domain.PickupPetBand {
 		return false
 	}
 	observer := actor.Observer()
@@ -313,7 +315,6 @@ func eligiblePlayerByGid(actor monster.Instance, players []playerPose, gid uint3
 
 // fellowCOSBand is CGObj_IsFellowCOS's band (TypeID 4 = 5, 483980).
 const fellowCOSBand = 5
-const pickupCOSBand = 4
 
 /*
 ================

@@ -27,11 +27,16 @@ is dismissed or the player logs out. A full pet bag disables automatic pickup;
 clear space and enable grabbing again. Expiry dismisses the pet and keeps its
 stored items. Lease renewal restores access to that same pet.
 
-Summoned item icons have a yellow border and the retail animated edge. Dead
-or expired item icons have a blue wash. The Experimental window has a Smaller grab pets option (off by default),
-which uses 75% of their previous size. Monsters ignore grab pets; direct and area monster attacks
-cannot damage them. Set `SRO_PET_PACING=1` to run grab and growth pets at 80% of their previous speed;
-walking and mount speeds are unchanged.
+Summoned item icons show the retail animated edge; dead or expired item icons
+have the retail blue wash. The Experimental window has a Smaller grab pets
+option (off by default), which uses 75% of their previous size. As in the
+original server, monsters ignore grab pets (their hostility check refuses a
+grab pet first), so direct and area monster attacks cannot damage them.
+
+Two server options are port-only and off by default; the game server reads
+them once at startup. Set `SRO_PET_PACING=1` to move grab and growth pets at
+80% of their run speed; walking and mount speeds are unchanged, and the native
+follow and battle speed rules still compare the unpaced speed.
 
 Set `SRO_PET_RECOVERY=1` to let grab and growth pets relocate beside their owner when the separation exceeds
 1,200 game units, or after 5 seconds without at least 2 units of movement
@@ -43,9 +48,9 @@ native behaviour.
 
 ## Evidence and implementation
 
-The provided screenshots and local v1.150 client files define the window:
-`C:/SRO/extracted/Media_extracted/resinfo/ifcos.txt`, `ifcosinfo.txt`,
-`ifcosinventory.txt`, and `ifcossetup.txt`. Character data classifies grab pets
+The provided screenshots and the v1.150 client's window resources define the
+window: `resinfo/ifcos.txt`, `ifcosinfo.txt`, `ifcosinventory.txt`, and
+`ifcossetup.txt` in the extracted client media. Character data classifies grab pets
 as COS band 4 and supplies their movement speeds. The existing implementation
 cites native command, record, filter, and slot-overlay handlers; those prior
 disassembly claims were not independently re-disassembled for this change.
@@ -57,8 +62,9 @@ repository contracts, rather than later private-server bot features.
 
 The movement repair compares the terrain height at the integer precision used
 by destination packets. It still revalidates the rounded horizontal endpoint
-against collision, so the repair does not bypass walls. Combat exclusion and
-the model size adjustment implement the explicit requested behavior.
+against collision, so the repair does not bypass walls. Combat exclusion
+follows the original server; the model size adjustment is an Experimental
+option.
 
 ## Quick in-game check
 

@@ -22,8 +22,6 @@ import (
 	"opensro.online/server/internal/game/world/simulation"
 )
 
-const pickupPetBand uint16 = 4
-
 /*
 ================
 petOwnerKey
@@ -285,8 +283,10 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 		return frames
 	}
 	block := rt.cosAbnormal(key.division, snapshot.Name, cos.GID)
+	// The step keeps the native run: 548A30 compares it with the authored
+	// speed. Only the follower moves at the paced one.
 	walk, run := cosParameter(ref, cos, block, movementWalkParameter), cosParameter(ref, cos, block, movementRunParameter)
-	state.follower.SetMovementSpeeds(walk, run, nowMs)
+	state.follower.SetMovementSpeeds(walk, rt.cosPacedRun(ref, run), nowMs)
 	var constraint func(simulation.Spawn, simulation.Spawn) (simulation.Spawn, *simulation.MoveError)
 	if rt.ConstrainMovement != nil {
 		constraint = func(from, to simulation.Spawn) (simulation.Spawn, *simulation.MoveError) {
@@ -311,7 +311,7 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 		pose := state.follower.Position(nowMs)
 		target := simulation.Spawn{RegionID: item.Position.RegionID, X: float64(item.Position.X), Y: float64(item.Y), Z: float64(item.Position.Z)}
 		if simulation.WorldDistance2D(pose, target) > grounditem.ExecuteRange {
-			return state.follower.Approach(target, float64(run), nowMs, grounditem.ExecuteRange, constraint)
+			return state.follower.Approach(target, float64(rt.cosPacedRun(ref, run)), nowMs, grounditem.ExecuteRange, constraint)
 		}
 		frames := state.follower.Stop(nowMs)
 		result := rt.applyCosGroundAt(key.division, state.character, q, cosGroundAttempt{now: time.UnixMilli(nowMs)})
@@ -326,7 +326,7 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 		following = true
 		return rt.advanceOwnerFormation(petCombatStep{key: key, state: state, snapshot: snapshot, pet: cos, ref: ref, run: run, constraint: constraint, nowMs: nowMs})
 	}
-	return state.follower.Advance(owner, float64(run), nowMs, constraint)
+	return state.follower.Advance(owner, float64(rt.cosPacedRun(ref, run)), nowMs, constraint)
 }
 
 // PetPresentation is the sole read boundary for peer pet motion. It holds the
@@ -445,10 +445,11 @@ func (rt *Runtime) companionPresentation(division string, state *petSession, cos
 		name = ref.Name
 	}
 	block := rt.cosAbnormal(division, c.Name, cos.GID)
+	walk, run := rt.cosMovementSpeeds(ref, cos, block)
 	result = &simulation.PeerCOS{Mounted: cos.Mounted, NativeBodyStatus: cos.NativeBodyStatus, World: world, Revision: revision, Session: state.session, Generation: state.generation,
 		Fresh: state.summonedAtMs != 0 && now-state.summonedAtMs <= petAppearWindowMs,
 		Row: wire.CosSpawnBand2{Band: uint8(ref.TidWord >> 11), RefObjID: cos.RefObjID, Gid: cos.GID,
-			Walk: cosParameter(ref, cos, block, movementWalkParameter), Run: cosParameter(ref, cos, block, movementRunParameter),
+			Walk: walk, Run: run,
 			Scale: cosParameter(ref, cos, block, actionSpeedParameter), Name: name, OwnerName: c.Name, OwnerModelRef: enterworld.CharacterModelRef(c, nil), OwnerGid: enterworld.ObjectIDForCharacter(c)}}
 	if state.relocatedAtMs != 0 && now-state.relocatedAtMs <= petAppearWindowMs {
 		result.Row.State = 7
@@ -623,7 +624,8 @@ func (rt *Runtime) companionTargets(division string, ownerGID uint32, nowMs int6
 	}
 	var out []simulation.CompanionTarget
 	for _, pet := range rt.companionPresentations(division, owner.Name) {
-		if pet.Mounted || pet.LifeState == wire.LifeStateDead || pet.Row.Band == uint8(pickupPetBand) {
+		// 5299E0 is never hostile to a grab pet (CGObj_IsPickPetCOS, slot 0x43C).
+		if pet.Mounted || pet.LifeState == wire.LifeStateDead || pet.Row.Band == domain.PickupPetBand {
 			continue
 		}
 		var record enterworld.CharacterCOS

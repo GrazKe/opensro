@@ -11,7 +11,7 @@ work before moving the same pet identity. Its inventory and lease survive.
 package action
 
 import (
-	"opensro.online/server/internal/game/companion"
+	"opensro.online/server/internal/domain"
 	"opensro.online/server/internal/game/enterworld"
 	"opensro.online/server/internal/game/item/wire"
 	"opensro.online/server/internal/game/world/simulation"
@@ -82,12 +82,12 @@ and retiring combat finalizes any upstream cast token before relocating.
 */
 func (rt *Runtime) recoverPet(step petRecoveryStep) ([]simulation.Frame, bool) {
 	state, pet, owner, nowMs := step.state, step.pet, step.owner, step.nowMs
-	if !companion.PolicyEnabled(companion.EnvPetRecovery) {
+	if !rt.PetPolicies.Recovery {
 		state.recovery = petRecovery{}
 		return nil, false
 	}
 	ref, found := rt.cosReference(pet)
-	if !found || (ref.TidWord>>11 != 3 && ref.TidWord>>11 != pickupPetBand) {
+	if !found || (ref.TidWord>>11 != domain.GrowthPetBand && ref.TidWord>>11 != domain.PickupPetBand) {
 		return nil, false
 	}
 	world, _ := state.follower.Presentation()
