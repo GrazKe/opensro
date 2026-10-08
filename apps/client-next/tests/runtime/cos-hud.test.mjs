@@ -11,7 +11,7 @@ Targeting survives a closed inventory but not world exit or source replacement.
 import "../helpers/native-source-loader.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCosHud } from "../../src/engine/runtime/ui/hud/cos-hud.ts";
+const { createCosHud } = await import( "../../src/engine/runtime/ui/hud/cos-hud.ts" );
 
 /*
 ================
