@@ -145,12 +145,6 @@ variable "beta_mastery" {
 
 # party_masteries puts each member's two main mastery trees on the quick party
 # board. Set off for the native roster rows.
-# Port-only later-version reverse destinations; native default is off.
-variable "reverse_map" {
-  type = string
-  default = "0"
-}
-
 variable "party_masteries" {
   type    = string
   default = "on"
@@ -317,7 +311,6 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_BETA_STARTER_KIT               = var.beta_starter_kit
         SRO_BETA_PLAYER_MAP                = var.beta_player_map
         SRO_BETA_MASTERY                   = var.beta_mastery
-        SRO_REVERSE_MAP                   = var.reverse_map
         SRO_PARTY_MASTERIES                = var.party_masteries
         SRO_BETA_GROWTH                    = var.beta_growth
         SRO_BETA_SKILL_EXP_RATE            = var.beta_skill_exp_rate

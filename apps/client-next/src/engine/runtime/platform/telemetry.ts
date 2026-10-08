@@ -105,7 +105,8 @@ export function createTelemetry( options: TelemetryOptions ) {
 			`Frame avg / p95: ${ms( sample.frameMs )} / ${ms( sample.p95FrameMs )}`,
 			`CPU avg / p95: ${ms( sample.cpuMs )} / ${ms( sample.p95CpuMs )}`,
 			`Actors: ${sample.actors} · Draws: ${sample.draws} · Groups: ${sample.visibleGroups}`,
-			...sample.build.lines
+			...sample.build.lines,
+			sample.build.detail
 		].filter( Boolean ).join( "\n" );
 	}
 

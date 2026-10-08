@@ -23,8 +23,6 @@ is unambiguous. Grass and Clock always require an explicit inventory target.
 */
 export interface CosItemUseContext {
 	readonly records: readonly CosRecord[];
-	readonly reverseChoice?: number;
-	readonly reversePointId?: number;
 	readonly selectedGid?: number;
 	readonly targetGid?: number;
 	readonly revivalSlot?: number;
@@ -86,15 +84,6 @@ export function cosItemUseTail(
 ): Uint8Array {
 	const band = flags >>> 5 & 3, group = flags >>> 7 & 15, subtype = flags >>> 11 & 31;
 	if ( (flags & 0x1c) !== 0x0c || band !== 3 ) return new Uint8Array();
-	if ( group === 3 && subtype === 3 ) {
-		const choice = context?.reverseChoice;
-		if ( choice === 2 || choice === 3 ) return Uint8Array.of( choice );
-		const id = context?.reversePointId;
-		if ( choice !== 4 || !Number.isInteger( id ) || id! < 1 || id! > 65535 ) {
-			throw Error( "Choose a reverse return destination" );
-		}
-		return Uint8Array.of( choice, id! & 255, id! >>> 8 );
-	}
 	// 3/3/13/8, the armour gender change: CIFInventory_ExecuteItemAction
 	// appends the bag slot the tool was dropped on (49C2B0 case 7).
 	if ( group === 13 && subtype === 8 ) {

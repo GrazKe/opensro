@@ -304,13 +304,12 @@ export function worldMapPresentation(
 		overlay: UiQuad[] = [],
 		markerQuads: UiQuad[] = [],
 		white = [ 1, 1, 1, 1 ] as const;
-	const frame = worldMapFrame(
+	const { page, width, height, left, bottom, top, right, cx, cy, px, py, ox, oy } = worldMapFrame(
 		pageId,
 		clip,
 		pan,
 		center
 	);
-	const { page, width, height, cx, cy, px, py, ox, oy } = frame;
 	/*
 	================
 	sprite
@@ -347,8 +346,16 @@ export function worldMapPresentation(
 		texture: string,
 		rotation: number
 	) {
-		const rect = worldMapMarkerRect( frame, { regionId, x, z } );
-		if ( rect ) sprite( markerQuads, texture, rect, [ 0, 0, 1, 1 ], rotation );
+		if ( regionId & 0x8000 ) return;
+		const mx = (((regionId & 255) * 192 + x / 10 - left) / (right - left)) * width,
+			my = ((top - ((regionId >>> 8) * 192 + z / 10)) / (top - bottom)) * height;
+		sprite(
+			markerQuads,
+			texture,
+			[ ox + mx - 8, oy + my - 8, 16, 16 ],
+			[ 0, 0, 1, 1 ],
+			rotation
+		);
 	}
 	if ( page ) {
 		const picture = "picture" in page ? page.picture : page.size;
@@ -555,95 +562,4 @@ export function mapLabelVisible( box: UiRect, clip: UiRect ): boolean {
 		box[1] + box[3] + MAP_LABEL_INK_MARGIN < clip[1] ||
 		box[1] - MAP_LABEL_INK_MARGIN > clip[1] + clip[3]
 	);
-}
-
-/*
-================
-ReverseScrollPoint
-
-Later-version map destination. The authority publishes coordinates for
-painting; item-use sends only its id back to the server.
-================
-*/
-export interface ReverseScrollPoint {
-	readonly id: number;
-	readonly name: string;
-	readonly regionId: number;
-	readonly x: number;
-	readonly y: number;
-	readonly z: number;
-}
-const MAX_REVERSE_SCROLL_POINTS = 4096;
-const MAP_MARKER_SIZE = 16;
-const REVERSE_REGION_SIZE = 1920;
-const MAP_REGION_SIZE = 192;
-// Later-client reference: hunting-point artwork faces right on the reverse map.
-export const REVERSE_SCROLL_MARKER_ROTATION = Math.PI / 2;
-export const REVERSE_SCROLL_MARKER = "/assets/images/Media_extracted/interface/worldmap/wmap_sign_huntingpoint.png";
-
-/*
-================
-decodeReverseScrollPoints
-================
-*/
-export function decodeReverseScrollPoints( value: unknown ): readonly ReverseScrollPoint[] {
-	if ( value === undefined ) return [];
-	if ( !Array.isArray( value ) || value.length > MAX_REVERSE_SCROLL_POINTS ) {
-		throw Error( "Invalid reverse scroll catalogue" );
-	}
-	const ids = new Set<number>();
-	return value.map( raw => {
-		if ( !raw || typeof raw !== "object" ) throw Error( "Invalid reverse scroll point" );
-		const point = raw as ReverseScrollPoint;
-		if (
-			!Number.isInteger( point.id ) || point.id < 1 || point.id > 65535 || ids.has( point.id ) ||
-			typeof point.name !== "string" || point.name.length > 128 || !Number.isInteger( point.regionId ) ||
-			point.regionId < 1 || point.regionId >= 32768 || ![ point.x, point.y, point.z ].every( Number.isFinite ) ||
-			point.x < 0 || point.x >= REVERSE_REGION_SIZE || point.z < 0 || point.z >= REVERSE_REGION_SIZE
-		) throw Error( "Invalid reverse scroll point" );
-		ids.add( point.id );
-		return { id: point.id, name: point.name, regionId: point.regionId, x: point.x, y: point.y, z: point.z };
-	} );
-}
-
-/*
-================
-worldMapReversePoints
-
-Use precisely the map frame's projection and clip the clickable icon.
-================
-*/
-export function worldMapReversePoints(
-	view: {
-		page: number;
-		clip: UiRect;
-		pan: readonly [number, number];
-		center: Pose;
-		points: readonly ReverseScrollPoint[];
-	}
-) {
-	const frame = worldMapFrame( view.page, view.clip, view.pan, view.center );
-	return view.points.flatMap( point => {
-		const rect = worldMapMarkerRect( frame, point );
-		if ( !rect || !mapLabelVisible( rect, view.clip ) ) return [];
-		return [ { point, rect } ];
-	} );
-}
-
-/*
-================
-worldMapMarkerRect
-
-One projection owns native markers and reverse-scroll hit areas.
-================
-*/
-function worldMapMarkerRect(
-	frame: ReturnType<typeof worldMapFrame>,
-	point: { regionId: number; x: number; z: number; }
-): UiRect | null {
-	if ( point.regionId & 0x8000 ) return null;
-	const { left, right, top, bottom, width, height, ox, oy } = frame;
-	const x = ((point.regionId & 255) * MAP_REGION_SIZE + point.x / 10 - left) / (right - left) * width;
-	const y = (top - ((point.regionId >>> 8) * MAP_REGION_SIZE + point.z / 10)) / (top - bottom) * height;
-	return [ ox + x - MAP_MARKER_SIZE / 2, oy + y - MAP_MARKER_SIZE / 2, MAP_MARKER_SIZE, MAP_MARKER_SIZE ];
 }

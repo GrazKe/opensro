@@ -86,8 +86,6 @@ export function createInventory(
 	play: ( handle: import("@/engine/foundation/ui/sound-catalog").UiSoundHandle ) => void = () => {},
 	playItem: ( cue: import("@/engine/contracts/audio").ItemSoundRequest ) => void = () => {}
 ) {
-	let reverseScroll: { slot: number; refObjId: number; } | null = null;
-	let reverseScrollPoints: readonly ReverseScrollPoint[] = [];
 	const alchemy = createAlchemy(), gacha = createGacha(), mall = createMall(), magicOption = createMagicOptionGrant();
 	const companionRentals = createCompanionRentals();
 	let mallDelivery: { prepared: ReturnType<typeof decodeShopItems>; slots: number[]; } | null = null;
@@ -471,10 +469,6 @@ bootstrap
 ================
 		*/
 		bootstrap( value: unknown ) {
-			reverseScroll = null;
-			reverseScrollPoints = decodeReverseScrollPoints(
-				(value as { reverseScrollPoints?: unknown; }).reverseScrollPoints
-			);
 			bindingMoves = [];
 			itemCooldowns = [];
 			presentations = new WeakMap();
@@ -1253,14 +1247,6 @@ A job dress bar (0x3434) holds the suit move's answer for its seconds.
 use
 ================
 		*/
-		cancelReverse() {
-			reverseScroll = null;
-		},
-		/*
-		================
-		use
-		================
-		*/
 		use( n: number, now = 0, context?: CosItemUseContext ) {
 			if ( timedOut ) throw Error( "Inventory transaction timed out; reconnect to resynchronize" );
 			const item = slots.get( slot( n ) );
@@ -1898,8 +1884,6 @@ state
 				inventory: published ?? (published = [ ...slots.values() ].map( present )),
 				itemFlashes,
 				inventoryPending: busy(),
-				reverseScrollSlot: reverseScroll?.slot,
-				reverseScrollPoints,
 				error
 			};
 		},
@@ -1909,8 +1893,6 @@ clear
 ================
 		*/
 		clear() {
-			reverseScroll = null;
-			reverseScrollPoints = [];
 			bindingMoves = [];
 			itemCooldowns = [];
 			shopCompletionRevision = 0;

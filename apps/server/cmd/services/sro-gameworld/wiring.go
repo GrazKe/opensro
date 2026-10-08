@@ -225,10 +225,9 @@ func newGameWorldApplication(
 	// Built after gameplay construction: the static item rows name the
 	// alchemy and Magic Pop catalogues it configures.
 	references, err := enterworld.NewBrowserReferences(enterworld.BrowserReferenceSources{
-		Skills:              gameplay.deps.Skills,
-		ItemCommands:        authority.textdata.Items,
-		StaticItems:         enterworld.StaticRefItemRows(gameplay.deps),
-		ReverseScrollPoints: gameplay.items.ReverseScrollPoints(),
+		Skills:       gameplay.deps.Skills,
+		ItemCommands: authority.textdata.Items,
+		StaticItems:  enterworld.StaticRefItemRows(gameplay.deps),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("browser references: %w", err)

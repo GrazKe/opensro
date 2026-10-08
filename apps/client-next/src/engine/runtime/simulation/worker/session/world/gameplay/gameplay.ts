@@ -2039,11 +2039,6 @@ state here before a command can claim a native wire conversation.
 				dirty = true;
 				return null;
 			}
-			if ( command.kind === "reverse-scroll-cancel" ) {
-				inventory.cancelReverse();
-				dirty = true;
-				return null;
-			}
 			if ( command.kind === "item-use" ) {
 				const context = {
 					records: [ ...cosRecords.values() ],

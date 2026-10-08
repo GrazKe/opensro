@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 
@@ -54,8 +53,7 @@ type BrowserReferenceSources struct {
 	// ItemCommands may be nil.
 	ItemCommands interface{ ItemCommandReferences() []ItemCommandReference }
 	// StaticItems are the item rows every viewer needs (StaticRefItemRows).
-	ReverseScrollPoints []ReverseScrollPoint
-	StaticItems         []RefItemRow
+	StaticItems []RefItemRow
 }
 
 /*
@@ -78,16 +76,6 @@ func NewBrowserReferences(sources BrowserReferenceSources) (*BrowserReferences, 
 	if len(commandRows) > maxPublicReferenceRows {
 		return nil, fmt.Errorf("invalid public item command catalogue size: %d", len(commandRows))
 	}
-	if len(sources.ReverseScrollPoints) > 4096 {
-		return nil, fmt.Errorf("reverse scroll catalogue exceeds point budget")
-	}
-	seenPoints := make(map[uint16]bool, len(sources.ReverseScrollPoints))
-	for _, point := range sources.ReverseScrollPoints {
-		if point.ID == 0 || seenPoints[point.ID] || len(point.Name) > 128 || point.RegionID == 0 || point.RegionID >= 0x8000 || point.X < 0 || point.X >= 1920 || point.Z < 0 || point.Z >= 1920 || math.IsNaN(point.X) || math.IsNaN(point.Y) || math.IsNaN(point.Z) || math.IsInf(point.X, 0) || math.IsInf(point.Y, 0) || math.IsInf(point.Z, 0) {
-			return nil, fmt.Errorf("invalid reverse scroll point %d", point.ID)
-		}
-		seenPoints[point.ID] = true
-	}
 	itemRows := sources.StaticItems
 	if itemRows == nil {
 		itemRows = []RefItemRow{}
@@ -105,8 +93,7 @@ func NewBrowserReferences(sources BrowserReferenceSources) (*BrowserReferences, 
 		RefSkillSnapshot      []SpawnSkillRow        `json:"refSkillSnapshot"`
 		RefItemSnapshot       []RefItemRow           `json:"refItemSnapshot"`
 		ItemCommandReferences []ItemCommandReference `json:"itemCommandReferences,omitempty"`
-		ReverseScrollPoints   []ReverseScrollPoint   `json:"reverseScrollPoints,omitempty"`
-	}{releaseprotocol.ReferencesContract, 1, rows, itemRows, commandRows, sources.ReverseScrollPoints})
+	}{releaseprotocol.ReferencesContract, 1, rows, itemRows, commandRows})
 	if err != nil {
 		return nil, err
 	}
@@ -199,20 +186,4 @@ func referenceEnterWorldBlob(result *BootstrapResult, refs *BrowserReferences) (
 		Bootstrap  map[string]json.RawMessage `json:"bootstrap"`
 		References *BrowserReferences         `json:"references"`
 	}{2, wrapper.Bootstrap, refs})
-}
-
-/*
-================
-ReverseScrollPoint
-
-Public location ids. Clients choose an id, never an arbitrary destination.
-================
-*/
-type ReverseScrollPoint struct {
-	ID       uint16  `json:"id"`
-	Name     string  `json:"name"`
-	RegionID uint16  `json:"regionId"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	Z        float64 `json:"z"`
 }

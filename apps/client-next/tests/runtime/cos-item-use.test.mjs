@@ -517,23 +517,3 @@ test("automatic companion refusal feedback distinguishes absent, incompatible, r
 	assert.equal( autoPotionTargetNotice( flags( 1, 9 ), [ { ...pet, satiety: 9899 } ], pet.gid ), null );
 	assert.equal( autoPotionTargetNotice( flags( 1, 1 ), [], 0 ), null );
 });
-
-/*
-================
-reverse scroll wire choices
-================
-*/
-test("reverse scroll carries recorded choices or a bounded authority id", () => {
-	const type = flags( 3, 3 );
-	assert.throws( () => cosItemUseTail( type, [] ), /destination/ );
-	for ( const choice of [ 2, 3 ] ) {
-		assert.deepEqual( cosItemUseTail( type, [], { records: [], reverseChoice: choice } ), Uint8Array.of( choice ) );
-	}
-	assert.deepEqual(
-		cosItemUseTail( type, [], { records: [], reverseChoice: 4, reversePointId: 513 } ),
-		Uint8Array.of( 4, 1, 2 )
-	);
-	for ( const id of [ 0, 65536, 1.5, NaN ] ) {
-		assert.throws( () => cosItemUseTail( type, [], { records: [], reverseChoice: 4, reversePointId: id } ) );
-	}
-});
