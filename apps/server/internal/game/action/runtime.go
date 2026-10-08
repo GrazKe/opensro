@@ -71,6 +71,7 @@ type Runtime struct {
 	returnCasts         sync.Map // simulation.WorldKey -> pendingReturn; division lock owns changes
 	playerDisplacements sync.Map // simulation.WorldKey -> playerDisplacement; a struck player's hold
 	jobDresses          sync.Map // simulation.WorldKey -> jobDress (jobdress.go)
+	jobActivations      sync.Map // simulation.WorldKey -> int64 end ms (jobdress.go)
 	// caravans are the registered trade caravans (caravan.go); caravanMu
 	// serializes the registry and caravanTickMs is its last advance.
 	caravanMu     sync.Mutex
@@ -217,6 +218,9 @@ type Runtime struct {
 
 	// MoveCOS delegates mounted movement to the sole movement/collision owner.
 	MoveCOS func(string, *enterworld.Character, uint32, []byte) []wire.Frame
+	// MoveCOSPublished orders native mounted movement acknowledgement with
+	// its terminal collision event under the movement owner's operation lock.
+	MoveCOSPublished func(string, *enterworld.Character, wire.CosCommand, func([]wire.Frame))
 	// SteerCOS and StopCOS delegate the vehicle's 0x769E steer (tag 0x04)
 	// and direction stop (tag 0x03) to the same owner. They return the
 	// acting session's frames and the observers' frames.
@@ -279,7 +283,7 @@ type Runtime struct {
 	CapturedFollowerDied        func(*enterworld.Character) []wire.Frame
 	AdvanceQuestCalendar        func(nowMs int64)
 	ReleaseQuestCapturesOnDeath func(*enterworld.Character) ([]wire.Frame, bool)
-	QuestMonsterDrops           func(*enterworld.Character, string, func() (uint32, error)) []inventory.ItemAmount
+	QuestMonsterDrops           func(*enterworld.Character, string, uint8, func() (uint32, error)) []inventory.ItemAmount
 	QuestTravelBlocks           func(*enterworld.Character) uint32
 	UpdateQuestKill             func(
 		character *enterworld.Character,
@@ -304,6 +308,14 @@ type Runtime struct {
 	// server-driven character move must use it and commit the returned walk,
 	// or the next move re-guesses the surface from a quantized height.
 	ConstrainWalk func(
+		characterName string,
+		from simulation.Spawn,
+		fromOwner simulation.NavOwner,
+		to simulation.Spawn,
+	) (simulation.Spawn, simulation.NavWalk, *simulation.MoveError)
+	// AdmitGroundWalk retains an ordinary movement goal for runtime collision
+	// stepping. Authored displacements keep the complete ConstrainWalk query.
+	AdmitGroundWalk func(
 		characterName string,
 		from simulation.Spawn,
 		fromOwner simulation.NavOwner,
@@ -357,9 +369,15 @@ type Runtime struct {
 	UpdateJobExperience func(character *enterworld.Character, delta int64) ([]wire.Frame, bool)
 
 	// PushCharacterFrames delivers the actor's complete ordered progression
-	// burst after the authority door closes. It also delivers the private half
-	// of a pickup whose server-owned approach completes on the simulation tick.
+	// burst after the authority door closes. Pending pickups use captured
+	// delivery when configured; detached runtimes retain this actor fallback.
 	PushCharacterFrames func(divisionID, characterName string, frames []wire.Frame)
+
+	// CaptureCharacterFrames snapshots recipient sessions and their scene
+	// revisions under the division lock, after the character door closes.
+	// Capture must not send. Invoke the returned handle only after releasing
+	// the division lock; a nil handle means no recipient was captured.
+	CaptureCharacterFrames func(divisionID, characterName string) func([]wire.Frame)
 
 	// PushDivisionPeerFrames delivers public presentation frames to every
 	// same-division session except the acting character: pickup animation/world
@@ -420,7 +438,8 @@ type Runtime struct {
 	basicAttackIntents   map[string]basicAttackIntent
 	// actionSessions owns the pending back command and private B2CD count.
 	// Existing continuation and cast owners execute and commit gameplay.
-	actionSessions sync.Map
+	groundApproachStops sync.Map // motion revision terminal events; action tick owns retirement
+	actionSessions      sync.Map
 
 	// Exchanges holds the open player-to-player exchanges and their
 	// requests (exchange.go).
@@ -743,9 +762,9 @@ func (rt *Runtime) characterSnapshot(
 ==================
 writeBackWorld
 
-writeBackWorld persists the goal plane of the runtime world state onto the
-character record (the segment plane is runtime-only, like the fixture's
-in-memory moveSegment across restarts).
+writeBackWorld persists the accepted ground pose onto the character record.
+Authored displacement state keeps its existing destination semantics; the
+ordinary ground mover never persists a destination it has not reached.
 
 The write-back owns ONLY spawn/movementMode/spawnSet; every other world
 field (dungeonMinimap, movementSourceSeeded, updatedAt, moveSegment echo,
@@ -756,9 +775,10 @@ shallow copy) stay unchanged.
 ==================
 */
 func writeBackWorld(character *enterworld.Character, state simulation.WorldState) {
-	regionID := int64(state.Spawn.RegionID)
-	x, y, z := state.Spawn.X, state.Spawn.Y, state.Spawn.Z
-	angle := int64(state.Spawn.Angle)
+	spawn := state.PersistedSpawn()
+	regionID := int64(spawn.RegionID)
+	x, y, z := spawn.X, spawn.Y, spawn.Z
+	angle := int64(spawn.Angle)
 	mode := int64(state.MovementMode)
 	next := enterworld.CharacterWorld{}
 	if character.World != nil {
@@ -853,6 +873,27 @@ func (rt *Runtime) constrainWalk(
 	}
 
 	return to, simulation.NavWalk{}, nil
+}
+
+/*
+==================
+admitGroundWalk
+
+Player approaches retain their intended goal while the world owner checks
+each elapsed movement step. A skill displacement still resolves its whole
+authored chord through constrainWalk before it commits.
+==================
+*/
+func (rt *Runtime) admitGroundWalk(
+	characterName string,
+	from simulation.Spawn,
+	fromOwner simulation.NavOwner,
+	to simulation.Spawn,
+) (simulation.Spawn, simulation.NavWalk, *simulation.MoveError) {
+	if rt.AdmitGroundWalk != nil {
+		return rt.AdmitGroundWalk(characterName, from, fromOwner, to)
+	}
+	return rt.constrainWalk(characterName, from, fromOwner, to)
 }
 
 /*

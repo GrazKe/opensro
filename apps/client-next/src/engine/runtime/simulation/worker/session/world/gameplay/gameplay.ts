@@ -254,6 +254,9 @@ const PICKUP_EXECUTE_RANGE = 10;
 // How long past two round trips a sent skill press's cooldown stand-in waits
 // for its answer.
 const SKILL_ANSWER_SLACK_MS = 500;
+// CASTER_DISABLED_ABNORMAL is freeze, sleep and stun in the abnormal mask
+// (g_adwAbnormalStatusBit: 0x1, 0x40, 0x4000), the set 58DAEF refuses.
+const CASTER_DISABLED_ABNORMAL = 0x4041;
 // B2CD kind 1 admits a command (75BAA0); count 2 queues it behind an open one.
 const ACTION_STATE_ARM = 1;
 const QUEUED_COMMANDS = 2;
@@ -378,11 +381,26 @@ when the cast finally started.
 		const oneWay = skillPress.oneWayMs();
 		sendFrame( frame );
 		skillPress.sent( now, skillId );
-		if ( immediate && affordable( catalog.find( row => row.id === skillId ) ) ) {
+		if ( immediate && affordable( catalog.find( row => row.id === skillId ) ) && !casterDisabled() ) {
 			combat.pressed( skillId, now + oneWay, now + 4 * oneWay + SKILL_ANSWER_SLACK_MS, now );
 		} // The HUD shows it as next while the server runs the caster there.
 		else skillPress.approach( skillId, target, now );
 		return frame;
+	}
+	/*
+================
+casterDisabled
+
+Whether the local caster is frozen, asleep or stunned. 58DAEF refuses
+such a caster's ordinary skills (0x3009), and the native press animates
+only on the server's answer (6FCD50), so neither the cast nor its cooldown
+stand-in may be predicted: they would play and snap back (BUG-066). The
+press is still sent; the server alone knows the rows (nmf) it admits.
+================
+	*/
+	function casterDisabled() {
+		return ((combat.state().vitals.find( v => v.gid === localGid )?.abnormal ?? 0) & CASTER_DISABLED_ABNORMAL) !==
+			0;
 	}
 	/*
 ================
@@ -438,7 +456,8 @@ would turn it.
 	) {
 		const walking = movement.state(), pose = walking.pose;
 		if (
-			!metadata?.actionMs || !affordable( metadata ) || !pose || walking.moving || !local || local.mountedOn ||
+			!metadata?.actionMs || !affordable( metadata ) || casterDisabled() || !pose || walking.moving || !local ||
+			local.mountedOn ||
 			local.appearanceState?.[0] === 2 || localCastHolds( now ) || combat.predicting() ||
 			combat.guidedActive( localGid, now )
 		) return;
@@ -851,9 +870,18 @@ bootstrap
 
 Validate authoritative entry data before exposing character facts. Live
 packets own subsequent mutations; bootstrap owns only initial state.
+
+continued marks an entry that continues the same character's session: the
+one after a 0x3369 world transfer, or a resumed transport's repeated
+EnterWorld. Party and guild state survive it. Native keeps them in
+g_CharacterDependentData and its teleport reset retains the roster (the
+clear, 828960, runs from the party handlers, mission creation 829EE0 and
+teardown), and the server keeps the membership across both entries and
+resends nothing. Wiping them here made the next 0x3E58 type-6 row throw
+"Unknown party delta member" after every teleport or reconnect.
 ================
 		*/
-		bootstrap( value: unknown ) {
+		bootstrap( value: unknown, continued = false ) {
 			pickup.clear();
 			cosPickup.clear();
 			approach = interactionApproachTransition( approach, { kind: "cancel" } );
@@ -945,7 +973,12 @@ packets own subsequent mutations; bootstrap owns only initial state.
 			training.bootstrap( value );
 			fortress = fortressBootstrap( value );
 			musicMode = 0;
-			social = emptySocial( (value as { character?: { name?: string; }; }).character?.name ?? "" );
+			const entryName = (value as { character?: { name?: string; }; }).character?.name ?? "";
+			// The entry's prompts died with the old scene (resetWorld closes a
+			// transfer's; a resume's 0x3369 follows it); the roster stays.
+			social = continued && social.localName === entryName ?
+				withoutResurrection( { ...social, invitation: null } ) :
+				emptySocial( entryName );
 			bindings = skillBindings( value );
 			catalog = nextCatalog;
 			castMotion.catalog( nextCatalog );
@@ -1075,7 +1108,17 @@ nameInputs
 ================
 		*/
 		nameInputs( now = soundClock ) {
-			return { social, fortress, attackedName: combat.nameAttack( now ), localItem: inventory.nameItem() };
+			// localLevel: the level the experience stream maintains (CICUser
+			// +0x820). The local entity keeps its spawn row's level until it
+			// respawns, so a level-up would otherwise stay invisible to the PK
+			// gates (BR-261006-1818).
+			return {
+				social,
+				fortress,
+				attackedName: combat.nameAttack( now ),
+				localItem: inventory.nameItem(),
+				localLevel: progression.level
+			};
 		},
 		/*
 ================
@@ -1150,6 +1193,14 @@ itemUseType
 		*/
 		itemUseType( slot: number ) {
 			return inventory.useType( slot );
+		},
+		/*
+		================
+		offensiveSkill
+		================
+		*/
+		offensiveSkill( skill: number ) {
+			return combat.offensiveSkill( skill );
 		},
 		/*
 ================
@@ -2210,6 +2261,7 @@ references
 			}
 		},
 		surface: movement.surface,
+		clipMovement: movement.clipMovement,
 		/*
 ================
 heading

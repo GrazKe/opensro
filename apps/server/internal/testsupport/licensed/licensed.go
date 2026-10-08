@@ -21,8 +21,8 @@ inside it; the extraction and the published assets are not, so the gate
 names their identity in SRO_LICENSED_DATA_IDENTITY and RequireGameData reads
 it: a cached result is then reused only for the data it was produced from.
 
-This package imports nothing from the module, so any package's tests can
-use it, including internal/gamedata's own.
+This package depends only on config within the module, so game-data tests
+can use it without a dependency cycle.
 
 ===========================================================================
 */
@@ -36,6 +36,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"opensro.online/server/internal/config"
 )
 
 // RequireEnv makes missing game data a test failure instead of a skip.
@@ -53,25 +55,55 @@ RequireGameData
 Skips (or, under SRO_REQUIRE_GAME_DATA=1, fails) the test unless the
 verified server projection, the raw client extraction and the published
 browser assets are all present. Call it first in any test that reads them.
+A resolver error always fails: see gameDataVerdict.
 ==================
 */
 func RequireGameData(t testing.TB) {
 	t.Helper()
 	missing, err := checkedGameData()
-	if err == nil && len(missing) == 0 {
-		return
+	switch verdict, reason := gameDataVerdict(missing, err, os.Getenv(RequireEnv) == "1"); verdict {
+	case gameDataFail:
+		t.Fatal(reason)
+	case gameDataSkip:
+		t.Skip(reason)
+	}
+}
+
+// gameDataVerdict outcomes.
+const (
+	gameDataReady = iota
+	gameDataSkip
+	gameDataFail
+)
+
+/*
+==================
+gameDataVerdict
+
+What RequireGameData does with one check. Only absent data may skip, and
+only while SRO_REQUIRE_GAME_DATA is off. A resolver error is never absent
+data: a worktree holding its own generated tree, an unreadable worktree
+link or a relative override names a broken setup, and skipping on it let a
+plain `go test ./...` in such a worktree pass with every licensed test
+skipped.
+==================
+*/
+func gameDataVerdict(missing []string, err error, require bool) (int, string) {
+	if err != nil {
+		return gameDataFail, "licensed game data cannot be located: " + err.Error()
+	}
+	if len(missing) == 0 {
+		return gameDataReady, ""
 	}
 	reason := "licensed game data is not available"
-	if err != nil {
-		reason += ": " + err.Error()
-	}
 	for _, path := range missing {
 		reason += "\n\tmissing " + path
 	}
-	if os.Getenv(RequireEnv) == "1" {
-		t.Fatalf("%s (%s=1 requires it)", reason, RequireEnv)
+	if require {
+		return gameDataFail, fmt.Sprintf("%s (%s=1 requires it)", reason, RequireEnv)
 	}
-	t.Skipf("%s; build it with `pnpm assets build` (set %s=1 to fail instead of skip)", reason, RequireEnv)
+	return gameDataSkip, fmt.Sprintf("%s; build it with `pnpm assets build` (set %s=1 to fail instead of skip)",
+		reason, RequireEnv)
 }
 
 var (
@@ -107,23 +139,26 @@ const GeneratedRootEnv = "SRO_GENERATED_ROOT"
 ClientPublicRoot
 
 The published client tree: client-public under SRO_GENERATED_ROOT when it is
-set (it must be absolute, as for the scripts), else this checkout's own
-.generated/client-public. A worktree then reads the main checkout's build
-with no junction.
+set (it must be absolute, as for the scripts), else the main checkout's
+.generated/client-public. A worktree then reads the shared build with no
+junction and no environment.
 ==================
 */
 func ClientPublicRoot() (string, error) {
+	if err := config.RequireSourceWorktreeClean(); err != nil {
+		return "", err
+	}
 	if root := os.Getenv(GeneratedRootEnv); root != "" {
 		if !filepath.IsAbs(root) {
 			return "", fmt.Errorf("%s must be an absolute path, not %q", GeneratedRootEnv, root)
 		}
 		return filepath.Join(root, "client-public"), nil
 	}
-	repository, err := repositoryRoot()
+	main, err := mainRepositoryRoot()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(repository, ".generated", "client-public"), nil
+	return filepath.Join(main, ".generated", "client-public"), nil
 }
 
 /*
@@ -145,7 +180,11 @@ func missingGameData() ([]string, error) {
 	}
 	projection := os.Getenv("SRO_SERVER_GAME_DATA_ROOT")
 	if projection == "" {
-		projection = filepath.Join(repository, "apps", "server", ".generated", "game-data", "1.150", "server", "manifest.json")
+		main, mainErr := mainRepositoryRoot()
+		if mainErr != nil {
+			return nil, mainErr
+		}
+		projection = filepath.Join(main, "apps", "server", ".generated", "game-data", "1.150", "server", "manifest.json")
 	}
 	publicRoot, err := ClientPublicRoot()
 	if err != nil {
@@ -156,10 +195,24 @@ func missingGameData() ([]string, error) {
 		filepath.Join(gameRoot, "extracted", "Media_extracted"),
 		filepath.Join(publicRoot, "assets", "packs", "manifest.json"),
 	}
+	return missingPaths(required, os.Stat)
+}
+
+/*
+================
+missingPaths
+
+Only absence may skip licensed tests. Preserve inspection errors so the
+gate inherited from PR349 fails them regardless of RequireEnv.
+================
+*/
+func missingPaths(required []string, stat func(string) (os.FileInfo, error)) ([]string, error) {
 	var missing []string
 	for _, path := range required {
-		if _, statErr := os.Stat(path); statErr != nil {
+		if _, statErr := stat(path); errors.Is(statErr, os.ErrNotExist) {
 			missing = append(missing, filepath.Clean(path))
+		} else if statErr != nil {
+			return nil, fmt.Errorf("inspect licensed data %s: %w", path, statErr)
 		}
 	}
 	return missing, nil
@@ -196,34 +249,21 @@ resolveGameRoot
 
 The directory holding extracted/, by the rule of scripts/build/world/paths.mjs
 and scripts/sro_paths.py: SRO_GAME_ROOT when set, else the parent of the main
-checkout. A linked worktree's .git is a file naming
-<main>/.git/worktrees/<name>.
+checkout (config.MainCheckoutRoot).
 ==================
 */
 func resolveGameRoot(repository string) (string, error) {
-	if configured := strings.TrimSpace(os.Getenv("SRO_GAME_ROOT")); configured != "" {
-		return filepath.Abs(configured)
-	}
-	dotGit := filepath.Join(repository, ".git")
-	info, err := os.Stat(dotGit)
-	if err != nil || info.IsDir() {
-		return filepath.Join(repository, ".."), nil
-	}
-	link, err := os.ReadFile(dotGit)
+	main, err := config.MainCheckoutRoot(repository)
 	if err != nil {
 		return "", err
 	}
-	for line := range strings.SplitSeq(string(link), "\n") {
-		if target, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:"); ok {
-			worktreeGitDir := strings.TrimSpace(target)
-			if !filepath.IsAbs(worktreeGitDir) {
-				worktreeGitDir = filepath.Join(repository, worktreeGitDir)
-			}
-			// <main>/.git/worktrees/<name> -> <main>/.. is the game root.
-			return filepath.Join(worktreeGitDir, "..", "..", "..", ".."), nil
-		}
+	if err := config.RequireNoWorktreeCopies(repository, main); err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("unreadable worktree link %s", dotGit)
+	if configured := strings.TrimSpace(os.Getenv("SRO_GAME_ROOT")); configured != "" {
+		return filepath.Abs(configured)
+	}
+	return filepath.Join(main, ".."), nil
 }
 
 /*
@@ -239,8 +279,11 @@ func repositoryRoot() (string, error) {
 		return "", err
 	}
 	for {
-		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
+		filename := filepath.Join(dir, "go.mod")
+		if _, statErr := os.Stat(filename); statErr == nil {
 			return filepath.Join(dir, "..", ".."), nil
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect module marker %s: %w", filename, statErr)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -248,4 +291,24 @@ func repositoryRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+/*
+==================
+mainRepositoryRoot
+
+The main checkout of the rebuild checkout this test runs in, where the
+built trees live (config.MainCheckoutRoot).
+==================
+*/
+func mainRepositoryRoot() (string, error) {
+	repository, err := repositoryRoot()
+	if err != nil {
+		return "", err
+	}
+	main, err := config.MainCheckoutRoot(repository)
+	if err != nil {
+		return "", err
+	}
+	return main, config.RequireNoWorktreeCopies(repository, main)
 }

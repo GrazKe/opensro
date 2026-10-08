@@ -196,6 +196,7 @@ export interface Platform extends Disposable {
 	setMovementDump( dump: () => unknown ): void;
 	saveVideoOptions( value: import("@/engine/foundation/rendering/video-options").VideoOptions ): void;
 	saveQuickslotOptions( value: import("@/engine/foundation/ui/extended-quickslot").ExtendedQuickslotOptions ): void;
+	saveWindowPositions( value: import("@/engine/foundation/ui/window-positions").WindowPositions ): void;
 	saveInputOptions( value: import("@/engine/foundation/ui/input-options").InputOptions ): void;
 	saveSightMode( value: import("@/engine/foundation/rendering/camera-options").SightMode ): void;
 	saveAudioOptions( value: import("@/engine/foundation/audio/options").AudioOptions ): void;
@@ -221,7 +222,7 @@ export interface Platform extends Disposable {
 	/** The canvas CSS size, observed rather than read (no forced layout). */
 	canvasSize(): { readonly width: number; readonly height: number; };
 	readViewport(): Viewport;
-	/** CSS pixels per UI pixel: 1 when native, else the page height over the chosen screen height. */
+	/** CSS pixels per native UI pixel; reciprocal of the current device pixel ratio. */
 	displayScale(): number;
 	report( text: string, error?: unknown ): void;
 }

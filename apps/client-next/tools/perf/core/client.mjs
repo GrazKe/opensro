@@ -30,6 +30,10 @@ const SETTLE_MS = 8000;
 // Allocation sampling: one sample per 16 KiB allocated on average, keeping
 // objects the collectors already freed, so the profile shows churn.
 const HEAP_SAMPLING_BYTES = 16384;
+// V8 keeps per-line source positions for optimized code only with this flag;
+// without it a CPU profile charges an optimized function's ticks to its first
+// line. It changes code generation, so it is for profiling runs, not timing.
+export const DETAILED_LINE_INFO = "--js-flags=--detailed-line-info";
 
 /*
 ================
@@ -383,6 +387,43 @@ export async function measure( page, name, ms, drive ) {
 
 /*
 ================
+readReviveAdmission
+
+Failure-only allowlist. Missing vitals are admission evidence, not proof of
+death. Do not serialize session objects, character names, errors or tokens.
+This function is self-contained for page.evaluate.
+================
+*/
+/** @param {any} [target] */
+export function readReviveAdmission( target = globalThis ) {
+	const root = target.__benchRuntime;
+	const game = root?.gameplay();
+	const gid = Number.isFinite( game?.localGid ) ? game.localGid : null;
+	const vital = gid ? game?.vitals?.find( row => row.gid === gid ) : undefined;
+	const entity = gid ? root?.entities()?.find( row => row.gid === gid ) : undefined;
+	const hp = Number.isFinite( vital?.hp ) ? vital.hp : null;
+	let state = "nonpositive-hp";
+	if ( !root ) state = "missing-runtime";
+	else if ( !game ) state = "missing-gameplay";
+	else if ( !gid ) state = "missing-local-identity";
+	else if ( !vital ) state = "missing-local-vital";
+	else if ( hp === null ) state = "missing-hp";
+	else if ( hp > 0 ) state = "positive-hp";
+	return {
+		state,
+		localGid: gid,
+		localEntityPresent: !!entity,
+		localVitalPresent: !!vital,
+		hp,
+		maxHp: Number.isFinite( vital?.maxHp ) ? vital.maxHp : null,
+		deathState: typeof vital?.deathState === "boolean" ? vital.deathState : null,
+		lifeState: Number.isFinite( entity?.appearanceState?.[0] ) ? entity.appearanceState[0] : null,
+		level: Number.isFinite( game?.progression?.level ) ? game.progression.level : null
+	};
+}
+
+/*
+================
 revive
 
 The scratch character may have died in an earlier run; a benchmark of a
@@ -391,20 +432,28 @@ for health.
 ================
 */
 export async function revive( page ) {
+	/*
+	================
+	alive
+	================
+	*/
 	const alive = () =>
 		page.evaluate( () => {
 			const game = globalThis.__benchRuntime.gameplay();
 			return (game.vitals?.find( v => v.gid === game.localGid )?.hp ?? 0) > 0;
 		} );
 	if ( await alive() ) return;
-	console.log( "  reviving the scratch character" );
+	console.log( "  waiting for positive local HP; attempting eligible scratch-character rebirth" );
 	for ( let attempt = 0; attempt < 20 && !await alive(); attempt++ ) {
 		await page.evaluate( () =>
 			globalThis.__benchRuntime.session( { kind: "gameplay", command: { kind: "rebirth", choice: 2 } } )
 		);
 		await page.waitForTimeout( 1000 );
 	}
-	if ( !await alive() ) throw Error( "the scratch character could not be revived" );
+	if ( !await alive() ) {
+		const admission = await page.evaluate( readReviveAdmission ).catch( () => ({ state: "unavailable" }) );
+		throw Error( `the scratch character could not be revived; admission: ${JSON.stringify( admission )}` );
+	}
 }
 
 /*
@@ -414,7 +463,8 @@ openClient
 Resets the scratch character to fixture, boots the client at 1600x900,
 revives the character if it died and lets the world settle. Returns the
 browser and page; close the browser when done. counts and spans are
-instrument's options.
+instrument's options. lineInfo launches V8 with detailed line positions,
+for CPU profiles that attribute time to source lines.
 ================
 */
 export async function openClient(
@@ -429,12 +479,17 @@ export async function openClient(
 		videoOptions = undefined,
 		headed = false,
 		backgroundThrottling = false,
-		beforeLogin = undefined
+		beforeLogin = undefined,
+		lineInfo = false
 	} = {}
 ) {
 	process.env.SRO_PROBE_UNLOCK_FPS = uncapped ? "1" : "0";
 	await resetMissionMovementFixture( { characterName: CHARACTER, fixture, timeoutMs: 60000 } );
-	const { browser, page } = await launchProbeBrowser( { headed, backgroundThrottling } );
+	const { browser, page } = await launchProbeBrowser( {
+		headed,
+		backgroundThrottling,
+		extraBrowserArgs: lineInfo ? [ DETAILED_LINE_INFO ] : []
+	} );
 	try {
 		await page.addInitScript(
 			options => {

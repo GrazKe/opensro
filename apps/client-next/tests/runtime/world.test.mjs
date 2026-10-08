@@ -46,10 +46,9 @@ test("journal admits the expanded startup catalogue but still rejects excessive 
 	owner.publish( { kind: "gameplay", state } );
 	assert.throws(
 		() =>
-			owner.publish( {
-				kind: "gameplay",
-				state: { localGid: 2, skillCatalog: [ { id: 2, name: "y".repeat( 7 << 20 ) } ] }
-			} ),
+			// A queued gameplay snapshot is superseded rather than added
+			// (world-journal-gameplay.test.mjs); a bootstrap is never merged.
+			owner.publish( { kind: "bootstrap", value: { name: "y".repeat( 7 << 20 ) } } ),
 		/journal backlog exceeded/
 	);
 	const batch = owner.take();
@@ -520,6 +519,111 @@ test("fresh admission on reconnect; WELCOME cannot reuse an old bootstrap barrie
 	assert.deepEqual( mints, [ "transport", "enterworld", "transport", "enterworld" ] );
 	world.dispose();
 });
+/*
+================
+partyFrames
+
+The 0xB0D5 seed and a two-member 0x35D6 roster, then one 0x3E58 type-6
+member delta, as the party lane sends them.
+================
+*/
+function partyFrames( selfId, peerId ) {
+	const word = n => {
+		const b = Buffer.alloc( 4 );
+		b.writeUInt32LE( n );
+		return [ ...b ];
+	};
+	const name = s => [ Buffer.byteLength( s ), 0, ...Buffer.from( s ) ];
+	const row = ( id, who ) => [
+		0x37,
+		...word( id ),
+		...name( who ),
+		...word( 1907 ),
+		20,
+		0x9a,
+		1,
+		1,
+		10,
+		0,
+		0,
+		0,
+		20,
+		0,
+		...word( 0 )
+	];
+	return {
+		seed: Uint8Array.from( [ 1, ...word( selfId ) ] ),
+		roster: Uint8Array.from( [
+			3,
+			...word( selfId ),
+			0,
+			2,
+			...row( selfId, "fixture" ),
+			...row( peerId, "Other" )
+		] ),
+		delta: level =>
+			Uint8Array.from( [ 6, ...word( peerId ), 0x26, level, 0x9a, 1, 1, 11, 0, 0, 0, 20, 0, ...word( 0 ) ] )
+	};
+}
+test("a resumed session keeps the party, so the next member delta applies after loading completed", async t => {
+	const sockets = socketHarness( t ), world = createWorldSession( async () => "ticket", undefined, ignoreIncident );
+	const presentation = createPresentation(), party = partyFrames( 11, 22 );
+	const drain = () => {
+		let batch;
+		while ( (batch = world.take()) ) {
+			world.ack( batch.sequence );
+			presentation.apply( batch );
+		}
+	};
+	world.enter( "fixture", "shard", "http://localhost:9000" );
+	await settle();
+	world.step( 1 );
+	const first = sockets[0];
+	first.onopen();
+	first.receive( 2, welcome() );
+	world.step( 2 );
+	await settle();
+	world.step( 3 );
+	first.receive( 7, entered() );
+	for ( const row of rows ) first.receive( row.opcode, row.payload );
+	world.step( 4 );
+	drain();
+	world.step( 5 );
+	// Loading completes: travelReady retires the login's reset latch.
+	world.ready();
+	first.receive( 0xb0d5, party.seed );
+	first.receive( 0x35d6, party.roster );
+	world.step( 6 );
+	drain();
+	assert.equal( defined( presentation.gameplay() ).social.members.length, 2 );
+	world.disconnect();
+	world.reconnect();
+	await settle();
+	world.step( 7 );
+	const second = sockets[1];
+	second.onopen();
+	second.receive( 2, welcome( true ) );
+	world.step( 8 );
+	await settle();
+	world.step( 9 );
+	// The resumed EnterWorld result precedes its own reset (login order).
+	second.receive( 7, entered() );
+	for ( const row of rows ) second.receive( row.opcode, row.payload );
+	world.step( 10 );
+	drain();
+	world.step( 11 );
+	world.ready();
+	second.receive( 0x3e58, party.delta( 21 ) );
+	world.step( 12 );
+	drain();
+	assert.equal( world.status().phase, "world" );
+	assert.equal( world.status().error, undefined );
+	const social = defined( presentation.gameplay() ).social;
+	assert.deepEqual( social.members.map( m => m.id ), [ 11, 22 ] );
+	assert.equal( social.members[1].level, 21 );
+	world.dispose();
+	presentation.dispose();
+});
 test("logout/disposal rejects a late token and opens no socket", async t => {
 	const sockets = socketHarness( t );
 	let resolve;
@@ -751,7 +855,7 @@ test("a caught capture result marks the selected character", () => {
 });
 
 test("a rider's walk/run switches the vehicle that carries the path", () => {
-	const owner = createEntities();
+	const owner = createEntities( undefined, undefined, undefined, ( _from, to ) => to );
 	owner.bootstrap( {
 		...bootstrap,
 		refObjSnapshot: [ { refObjId: 2023, kind: "npc" }, { refObjId: 2183, kind: "cos", tidWord: 0x11c6 } ]
@@ -794,7 +898,7 @@ test("a rider's walk/run switches the vehicle that carries the path", () => {
 });
 
 test("motion preserves authoritative gait and mount metadata across ticks and stops", () => {
-	const owner = createEntities();
+	const owner = createEntities( undefined, undefined, undefined, ( _from, to ) => to );
 	owner.bootstrap( {
 		...bootstrap,
 		refObjSnapshot: [ { refObjId: 1, kind: "npc" }, { refObjId: 2, kind: "cos", tidWord: 0x11c6 } ]
@@ -840,7 +944,8 @@ spawn
 	assert.equal( owner.read( 7 ).mountedOn, 8 );
 	owner.receive( { opcode: 0x3122, payload: Uint8Array.of( 7, 0, 0, 0, 1, 0 ) }, 300 );
 	const stopped = owner.read( 7 );
-	assert.ok( Math.abs( stopped.x - 3.8 ) < 1e-8 );
+	const halfTick = Math.fround( 8 * Math.fround( .05 ) );
+	assert.equal( stopped.x, Math.fround( Math.fround( 3 + halfTick ) + halfTick ) );
 	owner.step( 5000 );
 	assert.deepEqual( owner.read( 7 ), stopped );
 	const despawn = Buffer.alloc( 4 );

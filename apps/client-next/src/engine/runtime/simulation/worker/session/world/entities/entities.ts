@@ -33,6 +33,7 @@ import {
 import { createEntityMotion } from "./motion/motion";
 import type { EntityState, WorldBatch, WorldEvent } from "@/engine/contracts/world";
 import { journalCost } from "@/engine/foundation/gameplay/journal-cost";
+import { mergeGameplaySnapshots } from "@/engine/foundation/gameplay/gameplay-snapshot";
 import type { WireFrame } from "@/engine/contracts/network";
 import { SYSTEM_PET_APPEAR } from "@/engine/contracts/orb";
 // The kinds whose spawn builds a CICharactor (players, NPCs, monsters, COS,
@@ -48,13 +49,14 @@ createEntities
 export function createEntities(
 	surface?: import("@/engine/contracts/navigation").SurfaceResolver,
 	lifecycle?: ( event: Extract<WorldEvent, { kind: "spawn" | "despawn"; }> ) => void,
-	nameContext?: ( entity?: EntityState ) => NameColorContext | undefined
+	nameContext?: ( entity?: EntityState ) => NameColorContext | undefined,
+	clip?: import("./motion/motion").MotionClip
 ) {
 	// A 16 MiB admitted server bootstrap can require twice that in UTF-16
 	// accounting. Static catalogues publish once; event count stays bounded.
 	const journalByteLimit = 32 << 20, objectListByteLimit = 8 << 20;
 	let skillRefs = spawnSkillReferences( [] );
-	const motion = createEntityMotion( surface );
+	const motion = createEntityMotion( surface, clip );
 	const itemRefs = new Map<number, number>(), itemNames = new Map<number, string>();
 	// /LOADMONSTER resolves a typed codename here, as the native client reads
 	// its own character data (GlobalDataManager_GetItemRecordByCodeName).
@@ -77,6 +79,8 @@ export function createEntities(
 	// Only locally sampled coordinates are replaceable. Wire state/lifecycle
 	// events remain reliable barriers; never mutate an already offered batch.
 	const pendingPoses = new Map<number, { index: number; size: number; }>();
+	// The queued gameplay snapshot a newer one merges into (supersedeGameplay).
+	let pendingGameplay: { index: number; size: number; } | undefined;
 	let stagedMode = 1, removalTail = new Uint8Array( 0 );
 	let synchronized = false, localName = "";
 	let localSkills: readonly import("@/engine/foundation/gameplay/spawn-skills").SpawnSkill[] = [];
@@ -117,6 +121,38 @@ export function createEntities(
 		if ( event.kind === "state" || event.kind === "spawn" ) pendingPoses.delete( event.entity.gid );
 		else if ( event.kind === "despawn" ) pendingPoses.delete( event.gid );
 		else if ( event.kind === "reset" || event.kind === "native" ) pendingPoses.clear();
+		// Presentation drops the gameplay state at a reset; never merge across one.
+		if ( event.kind === "reset" ) pendingGameplay = undefined;
+	}
+	/*
+	================
+	supersedeGameplay
+
+	Presentation keeps only the last gameplay snapshot of a batch, carrying
+	the skill catalogue, social state and shop forward from earlier ones
+	(presentation.ts apply). A snapshot published while the previous one is
+	still queued therefore merges into it the same way: the batch publishes
+	the same state, with one copy to clone instead of one per worker tick of
+	a slow presentation frame (#339).
+	================
+	*/
+	function supersedeGameplay( event: Extract<WorldEvent, { kind: "gameplay"; }> ) {
+		const queued = pendingGameplay && events[pendingGameplay.index];
+		if ( !pendingGameplay || queued?.kind !== "gameplay" ) {
+			const size = cost( event );
+			append( event, size );
+			pendingGameplay = { index: events.length - 1, size };
+			return;
+		}
+		const state = mergeGameplaySnapshots( queued.state, event.state );
+		const merged: WorldEvent = { kind: "gameplay", state }, size = cost( merged );
+		const nextBytes = bytes - pendingGameplay.size + size;
+		if ( nextBytes + stagedBytes > journalByteLimit ) {
+			throw Error( "Reliable world journal gameplay byte capacity exceeded" );
+		}
+		events[pendingGameplay.index] = merged;
+		bytes = nextBytes;
+		pendingGameplay.size = size;
 	}
 	/*
 	================
@@ -282,8 +318,24 @@ export function createEntities(
 			}
 		}
 	}
+	/*
+	================
+	refreshHoverAttack
+
+	Republishes each player's and pet's hover attack verdict (6875F0) when
+	it changes; verdict judges one entity.
+	================
+	*/
+	function refreshHoverAttack( verdict: ( e: EntityState ) => number ) {
+		for ( const e of entities.values() ) {
+			if ( e.kind !== "player" && e.kind !== "cos" ) continue;
+			const hoverAttack = verdict( e );
+			if ( hoverAttack !== (e.hoverAttack ?? 0) ) apply( { kind: "state", entity: { ...e, hoverAttack } } );
+		}
+	}
 	return {
 		recolor,
+		refreshHoverAttack,
 		/*
 		================
 		characterCountry
@@ -407,6 +459,7 @@ export function createEntities(
 			staged = null;
 			stagedBytes = 0;
 			events = [];
+			pendingGameplay = undefined;
 			inflight = null;
 			bytes = 0;
 		},
@@ -1134,6 +1187,7 @@ export function createEntities(
 			inflight = { sequence: ++sequence, events };
 			events = [];
 			pendingPoses.clear();
+			pendingGameplay = undefined;
 			bytes = 0;
 			return inflight;
 		},
@@ -1177,6 +1231,17 @@ export function createEntities(
 			}
 		},
 		read: ( gid: number ) => entities.get( gid ),
+		/*
+		================
+		rider
+
+		The entity riding the horse `gid` (CICharactor_GetMountedHorseOrVehicle).
+		================
+		*/
+		rider( gid: number ) {
+			for ( const entity of entities.values() ) if ( entity.mountedOn === gid ) return entity;
+			return undefined;
+		},
 		/*
 		================
 		groundItems
@@ -1239,7 +1304,8 @@ export function createEntities(
 		================
 		*/
 		publish( event: WorldEvent ) {
-			append( event );
+			if ( event.kind === "gameplay" ) supersedeGameplay( event );
+			else append( event );
 		},
 		count: () => entities.size
 	};

@@ -5,7 +5,9 @@ gameplay.ts - commands and immutable world gameplay publications
 
 Simulation owns these values. UI and presentation consume snapshots and
 submit intents; they never mutate inventory, learned ranks or server state.
-Optional publication fields retain their previous value until a full reset.
+Only skillCatalog, social and an omitted shop retain their previous values
+until a full reset (foundation/gameplay/gameplay-snapshot.ts). An explicitly
+undefined shop closes it; other fields belong to the newest snapshot.
 
 ===========================================================================
 */
@@ -116,6 +118,7 @@ Older untimed publishers retain sample-based presentation.
 export interface MovementPath {
 	readonly from: Pose;
 	readonly to: Pose;
+	readonly walkingPath?: readonly Pose[];
 	readonly durationMs?: number;
 	/** Simulation clock origin of a fixed-timing displacement leg. */
 	readonly startedAtMs?: number;
@@ -147,6 +150,9 @@ export interface MovementTransition {
 	readonly eligible: boolean;
 	readonly pathEligible?: boolean;
 	readonly corridor?: { readonly from: Pose; readonly to: Pose; };
+	// Ordered connected ground samples, including terrain-following heights.
+	// This proves recovery behind the current pose, not future velocity.
+	readonly walkingPath?: readonly Pose[];
 	// An accepted receipt can replace the first publication of its click.
 	// Retain the admitted walk behind its rebased anchor for presentation.
 	readonly previousPath?: { readonly from: Pose; readonly to: Pose; };
@@ -166,8 +172,9 @@ Outgoing intent and received chat share display data, not delivery status.
 */
 export interface ChatLine {
 	readonly sequence?: number;
-	// Epoch milliseconds on this client's clock when the line arrived. The wire
-	// carries no send time, so arrival is the closest available answer.
+	// Epoch milliseconds when the line was said. Live 0x3667 lines carry no send
+	// time, so they take this client's clock at arrival; replayed history takes
+	// the server's clock from OpChatHistory.
 	readonly sentAt?: number;
 	readonly channel: number;
 	readonly name: string;
@@ -326,6 +333,9 @@ export type GameplayCommand =
 		readonly query?: import("./navigation").GroundPickQuery;
 		readonly skillId: number;
 		readonly gid?: number;
+		// GetKeyState(VK_MENU) when the press executes (6FCD50): Alt admits an
+		// offensive skill at a player who is not otherwise hostile.
+		readonly alt?: boolean;
 	}
 	| {
 		readonly kind: "inventory-move";
@@ -528,6 +538,14 @@ export interface BetaMapPlayer {
 	readonly z: number;
 	readonly name: string;
 }
+/*
+================
+GameplayState
+
+Worker publications may omit unchanged catalog, social and shop values.
+Presentation owns the derived skillIndex; it never travels back to simulation.
+================
+*/
 export interface GameplayState {
 	readonly itemMall?: import("./item-mall").MallState;
 	readonly betaPlayers?: readonly BetaMapPlayer[];
@@ -580,7 +598,7 @@ export interface GameplayState {
 	readonly masteryTotalOverride?: number;
 	readonly trainingPending?: boolean;
 	readonly trainingError?: string | null;
-	// Journal omission retains the previous projection; reset sends a complete replacement.
+	// Included with the dynamic snapshot; omission does not retain an older fortress.
 	readonly fortress?: import("@/engine/foundation/gameplay/fortress").FortressState;
 	// The official's last answer; sequence advances with every answer, which
 	// opens or refreshes the application window.
@@ -669,10 +687,11 @@ export interface GameplayState {
 	readonly avatarInventory?: readonly InventoryItem[];
 	readonly inventory: readonly InventoryItem[];
 	readonly inventoryPending: boolean;
-	// Slot flashes raised by the 0x3645 item-state update (item-slot-effects.ts).
+	// Slot flashes raised by the 0x3645 item-state and 0x31E8 durability updates
+	// (item-slot-effects.ts).
 	readonly itemFlashes?: readonly {
 		readonly slot: number;
-		readonly kind: "changed" | "life";
+		readonly kind: "changed" | "life" | "repair";
 		readonly atMs: number;
 	}[];
 	readonly vitals: readonly VitalState[];
