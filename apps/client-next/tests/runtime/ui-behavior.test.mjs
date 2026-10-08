@@ -5082,7 +5082,11 @@ test("right-clicking a rental clock arms the yellow cursor and confirms the clic
 			magic: []
 		};
 		const pet = { ...clock, slot: 14, refObjId: 901, typeFlags: 0x10cc, summon: { state: 4, rentals: [] } };
-		f.state.gameplay.inventory = [ clock, pet, { ...pet, slot: 15, typeFlags: 0x08cc } ];
+		f.state.gameplay.inventory = [ clock, pet, { ...pet, slot: 15, typeFlags: 0x08cc }, {
+			...clock,
+			slot: 6,
+			typeFlags: 0x032c
+		} ];
 		f.state.gameplay.inventorySlotCount = 45;
 		f.ui.step( f.state, 0 );
 		f.ui.event( { kind: "key", code: "KeyI" } );
@@ -5091,7 +5095,10 @@ test("right-clicking a rental clock arms the yellow cursor and confirms the clic
 		f.ui.event( { kind: "right-activate", id: "slot:13" } );
 		assert.equal( f.ui.cursor(), 0xa6 );
 		assert.equal( sent.length, 0, "arming never picks a pet or spends the clock" );
-		f.ui.step( f.state, 2100 );
+		scene = f.ui.step( f.state, 2100 ) ?? scene;
+		const targets = defined( scene ).controls.filter( row => [ "slot:6", "slot:14" ].includes( row.id ) );
+		assert.equal( targets.length, 2 );
+		assert.ok( targets.every( row => !row.draggable && !row.carry ), "clock targets cannot capture a drag" );
 		// 567290: any occupied slot opens the confirmation and clears the
 		// cursor; the worker checks the target when the user confirms.
 		f.ui.event( { kind: "activate", id: "slot:15" } );

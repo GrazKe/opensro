@@ -10280,8 +10280,8 @@ export function createUi(
 							disabled: !enabled,
 							selected: inventorySlot === slot,
 							rightActivate: !!item || repairHud.armed(),
-							draggable: !!item && !repairHud.armed(),
-							carry: !repairHud.armed() && !!item
+							draggable: !!item && !repairHud.armed() && cosHud.clockCursor() === null,
+							carry: !repairHud.armed() && cosHud.clockCursor() === null && !!item
 						} );
 						if ( enabled && item ) {
 							for (
@@ -10380,8 +10380,8 @@ export function createUi(
 								// 699359 drops moves while one is pending; avatar slots stay enabled.
 								disabled: false,
 								rightActivate: !!item || repairHud.armed(),
-								draggable: !!item && !repairHud.armed(),
-								carry: !repairHud.armed() && !!item
+								draggable: !!item && !repairHud.armed() && cosHud.clockCursor() === null,
+								carry: !repairHud.armed() && cosHud.clockCursor() === null && !!item
 							} );
 						}
 					}
