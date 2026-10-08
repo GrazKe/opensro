@@ -113,7 +113,9 @@ func (rt *Runtime) HandleItemUse(
 	payload []byte,
 ) OpResult {
 	request, tail, err := wire.ReadItemUseRequest(payload)
-	if err != nil || character == nil || !inventory.IsBagSlot(request.Slot) {
+	// Check the wire's maximum here; the authority door checks the current
+	// character capacity before a persisted row can authorize an effect.
+	if err != nil || character == nil || !inventory.IsBagSlot(request.Slot, inventory.MaxBagEnd) {
 		return itemUseFailure(wire.ErrCodeInvalidRequest)
 	}
 
@@ -127,7 +129,8 @@ func (rt *Runtime) HandleItemUse(
 	var used *enterworld.ItemRef
 	var mercenaryContext domain.MercenaryContext
 	update := func() bool {
-		if character.DeletePending || rt.deps.ItemReferences() == nil {
+		if character.DeletePending || rt.deps.ItemReferences() == nil ||
+			!inventory.IsBagSlot(request.Slot, inventory.BagEnd(character)) {
 			return false
 		}
 
@@ -389,8 +392,8 @@ func (rt *Runtime) HandleItemUse(
 				result = itemUseFailure(wire.ErrCodeMultipleCOS)
 				return false
 			}
-			cosRef, found := characters.CharacterRefByCodename(ref.AssociatedCharacterCodename)
-			if !found || cosRef == nil || cosRef.RefObjID == 0 || cosRef.Codename != ref.AssociatedCharacterCodename ||
+			cosRef, found := enterworld.SummonCharacterReference(characters, ref, (&characterEquipRequirements{character: character}).characterLevel())
+			if !found ||
 				(cosRef.TidWord>>11 != 1 && cosRef.TidWord>>11 != 2) || !cosRef.CanRide || cosRef.MaxHP == 0 {
 				return false
 			}

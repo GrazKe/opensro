@@ -17,7 +17,12 @@ import {
 	type ExtendedQuickslotOptions
 } from "@/engine/foundation/ui/extended-quickslot";
 import { chatBlocks } from "@/engine/foundation/gameplay/chat-blocks";
-import { defaultVideoOptions, videoOptions, type VideoOptions } from "@/engine/foundation/rendering/video-options";
+import {
+	defaultVideoOptions,
+	displaySizes,
+	videoOptions,
+	type VideoOptions
+} from "@/engine/foundation/rendering/video-options";
 import { defaultInputOptions, inputOptions, virtualKey, type InputOptions } from "@/engine/foundation/ui/input-options";
 import { sightMode, type SightMode } from "@/engine/foundation/rendering/camera-options";
 import { initialAudioOptions, audioOptions, type AudioOptions } from "@/engine/foundation/audio/options";
@@ -25,10 +30,11 @@ import { cameraWheelDelta } from "@/engine/foundation/rendering/camera-wheel";
 import { createTouchCamera, type TouchCameraOutput } from "@/engine/foundation/rendering/touch-camera";
 import { experimentalOptions, type ExperimentalOptions } from "@/engine/foundation/ui/experimental-options";
 import { gameOptions, initialGameOptions, type GameOptions } from "@/engine/foundation/gameplay/game-options";
+import { windowPositions, type WindowPositions } from "@/engine/foundation/ui/window-positions";
 import { createUiBridge } from "./ui/ui";
 import { createTelemetry } from "./telemetry";
 import { createCursor } from "./ui/cursor";
-import type { UiEvent } from "@/engine/contracts/ui";
+import type { UiEvent, UiSemantics } from "@/engine/contracts/ui";
 import type { RawInput, WorldClickInput } from "@/engine/contracts/input";
 import type { Platform } from "@/engine/contracts/runtime";
 import type { AssetProgress } from "@/engine/contracts/assets";
@@ -57,6 +63,7 @@ export function createPlatform(
 	onWorldHover: ( point: readonly [number, number] | null ) => void = () => {}
 ): Platform {
 	const lifetime = new AbortController();
+	let lastUi: UiSemantics | null = null;
 	// The canvas CSS box, kept current by a ResizeObserver. Reading
 	// clientWidth every frame forces a synchronous layout whenever the UI
 	// touched the DOM that frame (a trace showed it among the top costs).
@@ -71,8 +78,9 @@ export function createPlatform(
 	================
 	*/
 	function refreshCanvasBox(): void {
-		canvasBox.width = canvas.clientWidth;
-		canvasBox.height = canvas.clientHeight;
+		const box = canvas.getBoundingClientRect();
+		canvasBox.width = box.width;
+		canvasBox.height = box.height;
 	}
 	/*
 	================
@@ -148,6 +156,23 @@ export function createPlatform(
 		status.value = "Quickslot options could not be restored: " + String( error );
 	}
 	onUi( { kind: "quickslot-preferences", value: quickslots } );
+	// 6A06B0 reads Settingwndpos.dat when the interface is created.
+	const windowPositionsKey = "sro:v1150:window-positions:1";
+	try {
+		const stored = localStorage.getItem( windowPositionsKey );
+		if ( stored !== null ) {
+			let value: WindowPositions | null;
+			try {
+				value = windowPositions( JSON.parse( stored ) );
+			} catch ( error ) {
+				status.value = "Window positions could not be restored: " + String( error );
+				value = null;
+			}
+			onUi( { kind: "window-positions", value } );
+		}
+	} catch ( error ) {
+		status.value = "Window positions could not be restored: " + String( error );
+	}
 	const inputKey = "sro:v1150:input-options:1";
 	let bindings = defaultInputOptions();
 	try {
@@ -170,13 +195,35 @@ export function createPlatform(
 	================
 	displayScale
 
-	CSS pixels per UI pixel. One, as in native window mode, unless a chosen
-	screen size is larger than the page: then the game area shrinks to fit.
+	CSS pixels per native UI pixel. Full-window UI follows display density,
+	with whole physical pixels per bitmap texel to keep retail text sharp.
+	Explicit screen sizes retain their selected physical-pixel dimensions.
 	================
 	*/
 	function displayScale(): number {
-		const size = video.displaySize, css = canvasSize().width;
-		return size && css > 0 ? css / size[0] : 1;
+		return uiPixelScale() / devicePixelRatio;
+	}
+	/*
+	================
+	uiPixelScale
+
+	Nearest integer enlargement restores logical UI size on Retina displays
+	without interpolating bitmap text at fractional browser/OS scales. It
+	steps down while the logical extent would be smaller than the original's
+	smallest screen mode: a 1080p laptop at 150% (DPR 1.5 rounds to 2) would
+	otherwise lay out a 960x540 UI the native windows do not fit.
+	================
+	*/
+	function uiPixelScale(): number {
+		if ( video.displaySize ) return 1;
+		const physical = readViewport(), modes = displaySizes().filter( ( [width] ) => width > 0 );
+		const minimumWidth = Math.min( ...modes.map( m => m[0] ) ),
+			minimumHeight = Math.min( ...modes.map( m => m[1] ) );
+		let scale = Math.max( 1, Math.round( devicePixelRatio ) );
+		while ( scale > 1 && (physical.width / scale < minimumWidth || physical.height / scale < minimumHeight) ) {
+			scale--;
+		}
+		return scale;
 	}
 	/*
 	================
@@ -201,12 +248,13 @@ export function createPlatform(
 			refreshCanvasBox();
 			return;
 		}
-		const scale = Math.min( 1, innerWidth / size[0], innerHeight / size[1] ),
-			width = size[0] * scale,
-			height = size[1] * scale;
+		const ratio = devicePixelRatio,
+			scale = Math.min( 1, innerWidth * ratio / size[0], innerHeight * ratio / size[1] ),
+			width = Math.round( size[0] * scale ) / ratio,
+			height = Math.round( size[1] * scale ) / ratio;
 		style.position = "absolute";
-		style.left = (innerWidth - width) / 2 + "px";
-		style.top = (innerHeight - height) / 2 + "px";
+		style.left = Math.floor( (innerWidth - width) * ratio / 2 ) / ratio + "px";
+		style.top = Math.floor( (innerHeight - height) * ratio / 2 ) / ratio + "px";
 		style.width = width + "px";
 		style.height = height + "px";
 		document.body.style.background = "#000";
@@ -214,7 +262,35 @@ export function createPlatform(
 		refreshCanvasBox();
 	}
 	layoutCanvas();
-	addEventListener( "resize", layoutCanvas, { signal: lifetime.signal } );
+	/*
+	================
+	resizeCanvas
+
+	Browser zoom can leave the physical UI size unchanged. Reposition its DOM
+	controls even when the retained UI therefore has no new publication.
+	================
+	*/
+	function resizeCanvas() {
+		layoutCanvas();
+		if ( lastUi ) bridge.present( lastUi );
+	}
+	addEventListener( "resize", resizeCanvas, { signal: lifetime.signal } );
+	let densityQuery = matchMedia( `(resolution: ${devicePixelRatio}dppx)` );
+	/*
+	================
+	densityChanged
+
+	Moving between displays can change density without a CSS resize. Rearm
+	the exact-density query and reposition retained controls in that case too.
+	================
+	*/
+	function densityChanged() {
+		densityQuery.removeEventListener( "change", densityChanged );
+		densityQuery = matchMedia( `(resolution: ${devicePixelRatio}dppx)` );
+		densityQuery.addEventListener( "change", densityChanged );
+		resizeCanvas();
+	}
+	densityQuery.addEventListener( "change", densityChanged );
 	/*
 	================
 	uiPoint
@@ -343,7 +419,10 @@ export function createPlatform(
 		onUi,
 		() => onInput( { kind: "release", timeMs: performance.timeOrigin + performance.now() } ),
 		( code, down ) => {
-			if ( virtualKey( code ) === bindings.keys[10] || virtualKey( code ) === bindings.keys[30] ) {
+			if (
+				virtualKey( code ) === bindings.keys[10] || virtualKey( code ) === bindings.keys[30] ||
+				code === "AltLeft" || code === "AltRight"
+			) {
 				onInput( {
 					kind: "key",
 					code,
@@ -475,7 +554,21 @@ export function createPlatform(
 		if ( blocksUi( ...uiPoint( event ) ) ) return;
 		onInput( { kind: "wheel", delta: cameraWheelDelta( event ), timeMs: timeMs() } );
 	}, { signal: lifetime.signal, passive: false } );
-	const viewport = { width: 1, height: 1 };
+	const viewport = { width: 1, height: 1 }, uiViewport = { width: 1, height: 1 };
+	/*
+	================
+	readViewport
+
+	The device pixels the canvas covers: a chosen screen size changes the
+	canvas CSS box (layoutCanvas), never the backing store's sharpness.
+	================
+	*/
+	function readViewport() {
+		const box = canvasSize();
+		viewport.width = Math.max( 1, Math.round( box.width * devicePixelRatio ) );
+		viewport.height = Math.max( 1, Math.round( box.height * devicePixelRatio ) );
+		return viewport;
+	}
 	return {
 		displayScale,
 		saveExperimentalOptions,
@@ -490,6 +583,21 @@ export function createPlatform(
 			video = next;
 			layoutCanvas();
 			onUi( { kind: "video-preferences", value: next } );
+		},
+		/*
+		================
+		saveWindowPositions
+
+		6A01B0 writes Settingwndpos.dat at logout and restart.
+		================
+		*/
+		saveWindowPositions( value: WindowPositions ) {
+			const saved = windowPositions( value );
+			try {
+				localStorage.setItem( windowPositionsKey, JSON.stringify( saved ) );
+			} catch ( error ) {
+				status.value = "Window positions could not be saved: " + String( error );
+			}
 		},
 		/*
 		================
@@ -588,6 +696,7 @@ export function createPlatform(
 		================
 		*/
 		presentUi( state ) {
+			lastUi = state;
 			bridge.present( state );
 			if ( fpsChip ) {
 				const scale = displayScale(),
@@ -681,17 +790,19 @@ export function createPlatform(
 		canvasSize,
 		/*
 		================
-		readViewport
+		readUiViewport
+
+		Keep fractional logical extents when the backing size is odd; rounding
+		them would stretch every glyph by a noninteger number of physical pixels.
 		================
 		*/
-		readViewport() {
-			// Always the device pixels the canvas covers: a chosen screen size
-			// changes the canvas's CSS box (layoutCanvas), never its sharpness.
-			const box = canvasSize();
-			viewport.width = Math.max( 1, Math.round( box.width * devicePixelRatio ) );
-			viewport.height = Math.max( 1, Math.round( box.height * devicePixelRatio ) );
-			return viewport;
+		readUiViewport() {
+			const physical = readViewport(), scale = uiPixelScale();
+			uiViewport.width = physical.width / scale;
+			uiViewport.height = physical.height / scale;
+			return uiViewport;
 		},
+		readViewport,
 		/*
 		================
 		report
@@ -760,6 +871,8 @@ export function createPlatform(
 		================
 		*/
 		dispose() {
+			densityQuery.removeEventListener( "change", densityChanged );
+			lastUi = null;
 			canvasObserver?.disconnect();
 			lifetime.abort();
 			bridge.dispose();

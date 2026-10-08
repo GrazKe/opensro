@@ -191,6 +191,7 @@ import {
 } from "@/engine/foundation/gameplay/skill-catalog";
 import { createCastMotionLock } from "@/engine/foundation/gameplay/cast-motion-lock";
 import { createSkillPressQueue, decidePress } from "@/engine/foundation/gameplay/skill-queue";
+import { pressAdmission } from "@/engine/foundation/gameplay/press-admission";
 import { movementHeading } from "@/engine/foundation/gameplay/native-movement";
 import { bootstrapProgression, progressionPacket, type Progression } from "@/engine/foundation/gameplay/progression";
 import { skillBindings, quickSlotPacket } from "@/engine/foundation/gameplay/quickslots";
@@ -254,6 +255,8 @@ const PICKUP_EXECUTE_RANGE = 10;
 // How long past two round trips a sent skill press's cooldown stand-in waits
 // for its answer.
 const SKILL_ANSWER_SLACK_MS = 500;
+// Movement mode 4 is seated (motion 4, which 58E0BF refuses ao/pw from).
+const MOVEMENT_SEATED = 4;
 // B2CD kind 1 admits a command (75BAA0); count 2 queues it behind an open one.
 const ACTION_STATE_ARM = 1;
 const QUEUED_COMMANDS = 2;
@@ -361,8 +364,9 @@ sendFrame
 sendSkillPress
 
 A skill press leaves: its answer times the round trip. When the server will
-start the cast as the press arrives (immediate: no target, or one within the
-skill's reach), its cooldown stands in from then until that answer. A press
+start the cast as the press arrives (prediction "cast": the server admits the press,
+pressAdmitted, with no target or one within the skill's reach), its cooldown
+stands in from then until that answer. A press
 the server first walks the caster for starts nothing on arrival: a stand-in
 there showed a cooldown that vanished when it lapsed mid-run and came back
 when the cast finally started.
@@ -372,32 +376,51 @@ when the cast finally started.
 		frame: WireFrame,
 		skillId: number,
 		now: number,
-		immediate: boolean,
+		prediction: "cast" | "approach" | null,
 		target = 0
 	): WireFrame {
 		const oneWay = skillPress.oneWayMs();
 		sendFrame( frame );
 		skillPress.sent( now, skillId );
-		if ( immediate && affordable( catalog.find( row => row.id === skillId ) ) ) {
+		if ( prediction === "cast" ) {
 			combat.pressed( skillId, now + oneWay, now + 4 * oneWay + SKILL_ANSWER_SLACK_MS, now );
 		} // The HUD shows it as next while the server runs the caster there.
-		else skillPress.approach( skillId, target, now );
+		else if ( prediction === "approach" ) skillPress.approach( skillId, target, now );
 		return frame;
 	}
 	/*
 ================
-affordable
+pressAdmitted
 
-Whether the caster's MP covers the skill's authored cost. A press it does
-not cover is still sent (a consumption rate the server alone knows may
-lower the cost), but the server all but surely refuses it (0x3004), so it
-neither stands a cooldown in nor starts its cast: either showed a cooldown,
-and an animation, for a cast that never came. Unknown vitals count as paid.
+Whether the server will admit the local caster's press (press-admission.ts).
+The native press animates only on the server's answer (6FCD50), so a press
+it refuses or may refuse predicts neither its cast nor its cooldown: either
+would play and snap back (BUG-066 stun, a wrong weapon). The press is still
+sent. A cost whose vital inputs are unknown waits for the server's answer.
 ================
 	*/
-	function affordable( metadata: SkillMetadata | undefined ): boolean {
-		if ( !metadata || !potionFacts.maxMp ) return true;
-		return skillMpCost( metadata, potionFacts.maxMp ) <= potionFacts.mp;
+	function pressAdmitted( metadata: SkillMetadata | undefined, local: EntityState | undefined ): boolean {
+		if ( !metadata || !local ) return false;
+		// TargetActionSkill refuses every mounted press and consumes a seated
+		// press by standing up. Neither starts a skill or a run toward a target.
+		if ( local.mountedOn || local.movementMode === MOVEMENT_SEATED ) return false;
+		if ( !potionFacts.maxMp && metadata.mpPercent ) return false;
+		const admission = pressAdmission( {
+			admit: metadata.admit,
+			needsFooting: metadata.needsFooting,
+			mpCost: skillMpCost( metadata, potionFacts.maxMp )
+		}, {
+			abnormal: combat.state().vitals.find( v => v.gid === localGid )?.abnormal ?? 0,
+			hp: potionFacts.hp,
+			maxHp: potionFacts.maxHp,
+			mp: potionFacts.mp,
+			maxMp: potionFacts.maxMp,
+			body: local.appearanceState?.[2] ?? 0,
+			mounted: !!local.mountedOn,
+			seated: local.movementMode === MOVEMENT_SEATED,
+			equipped: inventory.state().inventory
+		} );
+		return admission.kind === "admit";
 	}
 	/*
 ================
@@ -438,7 +461,8 @@ would turn it.
 	) {
 		const walking = movement.state(), pose = walking.pose;
 		if (
-			!metadata?.actionMs || !affordable( metadata ) || !pose || walking.moving || !local || local.mountedOn ||
+			!metadata?.actionMs || !pressAdmitted( metadata, local ) || !pose || walking.moving || !local ||
+			local.mountedOn ||
 			local.appearanceState?.[0] === 2 || localCastHolds( now ) || combat.predicting() ||
 			combat.guidedActive( localGid, now )
 		) return;
@@ -610,6 +634,11 @@ reuse gate as manual activation. Recovery completion is server-owned.
 			return;
 		}
 		if ( inventory.state().inventoryPending ) return;
+		const refusal = inventory.useNotice( slot, context );
+		if ( refusal ) {
+			api.notice( refusal );
+			return;
+		}
 		inventory.use( slot, now, context );
 		dirty = true;
 	}
@@ -851,9 +880,18 @@ bootstrap
 
 Validate authoritative entry data before exposing character facts. Live
 packets own subsequent mutations; bootstrap owns only initial state.
+
+continued marks an entry that continues the same character's session: the
+one after a 0x3369 world transfer, or a resumed transport's repeated
+EnterWorld. Party and guild state survive it. Native keeps them in
+g_CharacterDependentData and its teleport reset retains the roster (the
+clear, 828960, runs from the party handlers, mission creation 829EE0 and
+teardown), and the server keeps the membership across both entries and
+resends nothing. Wiping them here made the next 0x3E58 type-6 row throw
+"Unknown party delta member" after every teleport or reconnect.
 ================
 		*/
-		bootstrap( value: unknown ) {
+		bootstrap( value: unknown, continued = false ) {
 			pickup.clear();
 			cosPickup.clear();
 			approach = interactionApproachTransition( approach, { kind: "cancel" } );
@@ -945,7 +983,12 @@ packets own subsequent mutations; bootstrap owns only initial state.
 			training.bootstrap( value );
 			fortress = fortressBootstrap( value );
 			musicMode = 0;
-			social = emptySocial( (value as { character?: { name?: string; }; }).character?.name ?? "" );
+			const entryName = (value as { character?: { name?: string; }; }).character?.name ?? "";
+			// The entry's prompts died with the old scene (resetWorld closes a
+			// transfer's; a resume's 0x3369 follows it); the roster stays.
+			social = continued && social.localName === entryName ?
+				withoutResurrection( { ...social, invitation: null } ) :
+				emptySocial( entryName );
 			bindings = skillBindings( value );
 			catalog = nextCatalog;
 			castMotion.catalog( nextCatalog );
@@ -1075,7 +1118,17 @@ nameInputs
 ================
 		*/
 		nameInputs( now = soundClock ) {
-			return { social, fortress, attackedName: combat.nameAttack( now ), localItem: inventory.nameItem() };
+			// localLevel: the level the experience stream maintains (CICUser
+			// +0x820). The local entity keeps its spawn row's level until it
+			// respawns, so a level-up would otherwise stay invisible to the PK
+			// gates (BR-261006-1818).
+			return {
+				social,
+				fortress,
+				attackedName: combat.nameAttack( now ),
+				localItem: inventory.nameItem(),
+				localLevel: progression.level
+			};
 		},
 		/*
 ================
@@ -1150,6 +1203,14 @@ itemUseType
 		*/
 		itemUseType( slot: number ) {
 			return inventory.useType( slot );
+		},
+		/*
+		================
+		offensiveSkill
+		================
+		*/
+		offensiveSkill( skill: number ) {
+			return combat.offensiveSkill( skill );
 		},
 		/*
 ================
@@ -1386,7 +1447,7 @@ state here before a command can claim a native wire conversation.
 			// 6933a6 ground click / 692d19 entity click: seated interaction
 			// requests stand and RETURNS. It must not also predict travel.
 			if (
-				local?.movementMode === 4 &&
+				local?.movementMode === MOVEMENT_SEATED &&
 				[ "move", "ground-move", "select", "attack", "pickup" ].includes( command.kind )
 			) return sendFrame( { opcode: 0x7017, payload: Uint8Array.of( 4 ) } );
 
@@ -1984,10 +2045,7 @@ state here before a command can claim a native wire conversation.
 				return null;
 			}
 			if ( command.kind === "item-use" ) {
-				dirty = true;
-				return inventory.use( command.slot, now, {
-					reverseChoice: command.reverseChoice,
-					reversePointId: command.reversePointId,
+				const context = {
 					records: [ ...cosRecords.values() ],
 					selectedGid: command.companionGid ?? (cosSelection.selected() || undefined),
 					targetGid: targeting.state().target ?? 0,
@@ -1995,7 +2053,13 @@ state here before a command can claim a native wire conversation.
 					summonerSlot: command.summonerSlot,
 					skin: command.skin,
 					targetSlot: command.targetSlot
-				} );
+				};
+				const refusal = inventory.useNotice( command.slot, context );
+				if ( refusal ) {
+					api.notice( refusal );
+					return null;
+				}
+				return inventory.use( command.slot, now, context );
 			}
 			if ( command.kind === "premium-command" ) {
 				// 6AD990: the client's own checks raise their notice; a reverse
@@ -2074,7 +2138,7 @@ state here before a command can claim a native wire conversation.
 					// 6FD536 -> 8786E0 -> 878100 sends the ground skill request
 					// without stopping the current walk. Travel begins on B245;
 					// the ordinary cast's press hold would freeze this entire RTT.
-					return sendSkillPress( frame, skillId, now, true );
+					return sendSkillPress( frame, skillId, now, pressAdmitted( metadata, local ) ? "cast" : null );
 				}
 				if ( metadata && !metadata.targetRequired ) command = { kind: "skill", skillId: command.skillId };
 				else if ( metadata?.targetRequired && !command.gid ) {
@@ -2082,9 +2146,9 @@ state here before a command can claim a native wire conversation.
 					// nothing is selected, as the server resolves the same row.
 					if ( !metadata.targetSelf || !localGid ) throw Error( "This skill requires a target" );
 					const frame = combat.skill( skillId, localGid );
-					movement.holdForCast( now );
+					if ( pressAdmitted( metadata, local ) ) movement.holdForCast( now );
 					predictCast( metadata, undefined, local, now );
-					return sendSkillPress( frame, skillId, now, true );
+					return sendSkillPress( frame, skillId, now, pressAdmitted( metadata, local ) ? "cast" : null );
 				}
 			}
 			if ( command.kind === "skill" && command.gid === undefined ) {
@@ -2093,9 +2157,9 @@ state here before a command can claim a native wire conversation.
 				// as a targeted command does (movement.holdForCast).
 				const frame = combat.skill( command.skillId );
 				const skillId = command.skillId, metadata = catalog.find( row => row.id === skillId );
-				if ( metadata?.haltsWalk ) movement.holdForCast( now );
+				if ( metadata?.haltsWalk && pressAdmitted( metadata, local ) ) movement.holdForCast( now );
 				predictCast( metadata, undefined, local, now );
-				return sendSkillPress( frame, skillId, now, true );
+				return sendSkillPress( frame, skillId, now, pressAdmitted( metadata, local ) ? "cast" : null );
 			}
 			// 6B3E90 selects the portrait locally through 6813E0.
 			if ( entity && entity.gid === localGid && command.kind === "select" ) return selectEntity( entity, now );
@@ -2178,14 +2242,16 @@ state here before a command can claim a native wire conversation.
 			}
 			if ( command.kind !== "skill" ) throw Error( "Unsupported gameplay command" );
 			const frame = combat.skill( command.skillId, entity.gid );
-			movement.holdForCast( now );
 			if ( entity.gid !== localGid ) markTarget( entity );
 			const pressedSkill = command.skillId;
 			const pressedMetadata = catalog.find( row => row.id === pressedSkill );
+			const admitted = !!pressedMetadata && skillAdmitsPredictedTarget( pressedMetadata, entity, localGid );
+			// Admission precedes the server's movement-to-cast handoff. A refused
+			// or unknown press must not stop a walk while its answer is in flight.
+			if ( admitted && pressAdmitted( pressedMetadata, local ) ) movement.holdForCast( now );
 			predictCast( pressedMetadata, entity, local, now );
 			// Only a target the row admits stands a cooldown in: any other is the
 			// server's to refuse, and its stand-in showed a cooldown that vanished.
-			const admitted = !!pressedMetadata && skillAdmitsPredictedTarget( pressedMetadata, entity, localGid );
 			if ( !admitted ) {
 				sendFrame( frame );
 				skillPress.sent( now, command.skillId );
@@ -2195,7 +2261,9 @@ state here before a command can claim a native wire conversation.
 				frame,
 				command.skillId,
 				now,
-				entity.gid === localGid || withinReach( pressedMetadata, entity ),
+				pressAdmitted( pressedMetadata, local ) ?
+					(entity.gid === localGid || withinReach( pressedMetadata, entity ) ? "cast" : "approach") :
+					null,
 				entity.gid
 			);
 		},
@@ -2218,6 +2286,7 @@ references
 			}
 		},
 		surface: movement.surface,
+		clipMovement: movement.clipMovement,
 		/*
 ================
 heading

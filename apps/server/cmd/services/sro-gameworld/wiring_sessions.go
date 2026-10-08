@@ -28,6 +28,7 @@ installSessionLifecycle
 ================
 */
 func (game *gameplayPlane) installSessionLifecycle(hub *transport.Hub, authorityStore *store.Store) {
+	game.deps.LockPublication = game.items.LockPublication
 	game.deps.OnWorldBound = func(
 		session *transport.Session,
 		divisionID string,
@@ -97,7 +98,7 @@ func (game *gameplayPlane) worldBound(
 	game.items.BindRecoverySession(divisionID, character, session.ID)
 	game.movement.WorldBound(session, divisionID, character)
 	community.FriendWorldBound(game.deps, game.presence, divisionID, character)
-	game.parties.WorldBound(divisionID, character)
+	game.parties.WorldBound(session, divisionID, character)
 	game.matches.WorldBound(divisionID, character)
 	game.guildInvites.WorldBound(divisionID, character)
 	game.unions.DropPendingInvite(divisionID, character.Name)

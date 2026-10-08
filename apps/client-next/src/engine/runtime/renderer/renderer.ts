@@ -548,10 +548,9 @@ export function createRenderer(
 				const damage = uiScene?.damageText && damageRows.length && !preview ?
 					damageTextQuads( damageRows, timeSeconds, uiScene.width, uiScene.height ) :
 					[];
-				// Anchors are UI scene pixels, like the world anchors projected
-				// beside them. The GPU viewport is the backing store (CSS size
-				// times devicePixelRatio); projecting into it put every name at
-				// 1.25x its actor under 125% display scaling (BUG-043).
+				// Anchors use the UI scene's coordinate system, like the world
+				// annotations beside them. Runtime supplies logical UI extents;
+				// using that same extent keeps actor and label projections together.
 				const projectedUi = uiScene && (anchored?.size || uiProduct?.worldAnchors || damage.length) ?
 					projectCharacterLabels(
 						uiScene,
@@ -719,7 +718,8 @@ export function createRenderer(
 						height: scene.waterHeight ?? 0,
 						above: scene.camera.eye[1] >= (scene.waterHeight ?? 0),
 						seconds: timeSeconds
-					}, [ ...scene.draws, ...(preview ? [] : liveCharacters) ] )
+					}, [ ...scene.draws, ...(preview ? [] : liveCharacters) ] ),
+					targetSurface
 				);
 				probe?.renderMark( "submit" );
 				if ( pending ) {
@@ -727,13 +727,10 @@ export function createRenderer(
 					// visibility query: the frame stays open until that one is submitted.
 					const frameDevice = open;
 					open = null;
-					return pending.then( () => {
-						if ( !disposed ) targetSurface.present();
-					} ).catch( error => {
+					return pending.catch( error => {
 						if ( !disposed ) failure = String( error );
 					} ).finally( () => frameDevice.endFrame() );
 				}
-				targetSurface.present();
 			} catch ( error ) {
 				failure = String( error );
 			} finally {

@@ -30,7 +30,7 @@ Cleanup uses all bag stacks, independently of the saturated quest counter.
 func captureItemCount(c *enterworld.Character, code string) uint32 {
 	var count uint32
 	for _, row := range c.MissionInventory {
-		if row.Codename == code && row.Slot >= int64(inventory.EquipmentSlotEnd) && row.Slot < int64(inventory.BagSlotEnd) {
+		if row.Codename == code && inventory.InBag(c, row.Slot) {
 			count += uint32(max(row.StackCount, 1))
 		}
 	}
@@ -100,8 +100,8 @@ func (rt *Runtime) advanceCaptureMinute(c *enterworld.Character, at int, rule ca
 	if record.RemainingMinutes == 0 {
 		return nil, false
 	}
-	if rule.quest == "QNO_EU_IVY_1" && rt.SpawnCaptureGuardian != nil {
-		rt.SpawnCaptureGuardian(c)
+	if rule.quest == "QNO_EU_IVY_1" && rt.SpawnQuestMonster != nil {
+		rt.SpawnQuestMonster(c, ivyGuardian, 0, ivyGuardianRadius)
 	}
 	if record.RemainingMinutes == 1 {
 		frames, released := rt.releaseCapture(c, at, rule, rule.expired)
@@ -113,7 +113,7 @@ func (rt *Runtime) advanceCaptureMinute(c *enterworld.Character, at int, rule ca
 		return []wire.Frame{clearCaptureClock(c, at)}, true
 	}
 	record.RemainingMinutes--
-	record.Progress = packQuestMinutes(record.RemainingMinutes)
+	record.Progress = packQuestMinutes(uint16(record.RemainingMinutes))
 	record.Flags |= 4
 	c.ActiveQuests[at] = record
 	var frames []wire.Frame

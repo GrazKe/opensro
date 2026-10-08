@@ -8,10 +8,14 @@ Child owners handle process-specific state while this owner commits item rows.
 
 ===========================================================================
 */
-import { decodeReverseScrollPoints, type ReverseScrollPoint } from "@/engine/foundation/ui/world-map";
-import { cosItemUseTail, type CosItemUseContext } from "@/engine/foundation/gameplay/cos-item-use";
+import {
+	companionItemUseNotice,
+	cosItemUseTail,
+	type CosItemUseContext
+} from "@/engine/foundation/gameplay/cos-item-use";
 import { planContainerMove, sameStackIdentity, stackable } from "@/engine/foundation/gameplay/container-transfer";
 import { createMall } from "./mall/mall";
+import { createCompanionRentals } from "./companion-rentals";
 import type { MallPurchase } from "@/engine/foundation/gameplay/item-mall-wire";
 import {
 	itemCooldown,
@@ -85,6 +89,7 @@ export function createInventory(
 	let reverseScroll: { slot: number; refObjId: number; } | null = null;
 	let reverseScrollPoints: readonly ReverseScrollPoint[] = [];
 	const alchemy = createAlchemy(), gacha = createGacha(), mall = createMall(), magicOption = createMagicOptionGrant();
+	const companionRentals = createCompanionRentals();
 	let mallDelivery: { prepared: ReturnType<typeof decodeShopItems>; slots: number[]; } | null = null;
 	let avatars = new Map<number, InventoryItem>();
 	let slots = new Map<number, InventoryItem>(),
@@ -164,10 +169,14 @@ presentShop
 		return shopPresentation;
 	}
 	let published: readonly InventoryItem[] | null = null;
-	// One-shot slot flashes the 0x3645 item-state update raised (7654B0); each
-	// lasts under 1.3 s, so older entries are dropped on the next update.
-	let itemFlashes: readonly { readonly slot: number; readonly kind: "changed" | "life"; readonly atMs: number; }[] =
-		[];
+	// One-shot slot flashes the 0x3645 item-state (7654B0) and 0x31E8 durability
+	// (77C300) updates raised; each lasts under 1.3 s, so older entries are
+	// dropped on the next update.
+	let itemFlashes: readonly {
+		readonly slot: number;
+		readonly kind: "changed" | "life" | "repair";
+		readonly atMs: number;
+	}[] = [];
 	const FLASH_RETENTION_MS = 2000;
 	const objRefs = new Map<number, number>();
 	const useCooldowns = new Map<number, number>();
@@ -222,6 +231,24 @@ slot
 			throw new Error( "Invalid inventory slot" );
 		}
 		return n;
+	}
+	/*
+================
+companionContext
+
+7892D0 reads the retained object reference, not the item reference association.
+Never synthesize a character reference for a fresh summoner.
+================
+	*/
+	function companionContext( flags: number, context?: CosItemUseContext ): CosItemUseContext {
+		const targetSlot = (flags >>> 7 & 15) === 1 ? context?.revivalSlot : context?.summonerSlot;
+		const target = targetSlot === undefined ? undefined : slots.get( targetSlot );
+		const character = target?.summon?.refObjId;
+		return {
+			records: [],
+			...context,
+			summonedCharacterTypeFlags: character === undefined ? undefined : objRefs.get( character )
+		};
 	}
 	/*
 ================
@@ -452,6 +479,7 @@ bootstrap
 			itemCooldowns = [];
 			presentations = new WeakMap();
 			alchemy.reset();
+			companionRentals.reset();
 			gacha.reset();
 			exchange = emptyExchange();
 			stall = emptyStall();
@@ -1240,16 +1268,11 @@ use
 				throw new Error( "Item use unavailable" );
 			}
 			if ( itemCooldown( itemCooldowns, item.typeFlags, now ) ) return null;
-			const reverse = (item.typeFlags & 0x7ffc) === (3 << 2 | 3 << 5 | 3 << 7 | 3 << 11);
-			if ( reverse && context?.reverseChoice === undefined ) {
-				reverseScroll = { slot: n, refObjId: item.refObjId };
-				return null;
-			}
-			if ( reverse && (reverseScroll?.slot !== n || reverseScroll.refObjId !== item.refObjId) ) {
-				throw Error( "Reverse scroll selection changed" );
-			}
-			const tail = cosItemUseTail( item.typeFlags, [ ...slots.values() ], context );
-			if ( reverse ) reverseScroll = null;
+			const tail = cosItemUseTail(
+				item.typeFlags,
+				[ ...slots.values() ],
+				companionContext( item.typeFlags, context )
+			);
 			const p = new Uint8Array( 3 + tail.length );
 			p.set( tail, 3 );
 			p[0] = n;
@@ -1259,6 +1282,22 @@ use
 			pending = { opcode: 0xb5bd, source: n, deadline: now + 10000 };
 			error = null;
 			return frame;
+		},
+		/*
+================
+useNotice
+
+Expected Grass/Clock target failures do not send or acquire the pending lane.
+================
+		*/
+		useNotice( n: number, context?: CosItemUseContext ) {
+			const item = slots.get( slot( n ) );
+			if ( !item ) return null;
+			return companionItemUseNotice(
+				item.typeFlags,
+				[ ...slots.values() ],
+				companionContext( item.typeFlags, context )
+			);
 		},
 		/*
 ================
@@ -1422,6 +1461,17 @@ receive
 					(value === 0 ? "SND_EQBREAK" : value === 6 ? "SND_EQDANGER" : null) :
 					null;
 				slots.set( n, { ...item, durability: value } );
+				// 77C300: a repaired or revived item also flashes its slot (54FA20
+				// through 592BD0 / 59C3A0).
+				if ( value > old ) {
+					// 54FA20 resets one counter at +0x5C4; repeated repairs restart it.
+					itemFlashes = [
+						...itemFlashes.filter( f =>
+							now - f.atMs < FLASH_RETENTION_MS && !(f.slot === n && f.kind === "repair")
+						),
+						{ slot: n, kind: "repair", atMs: now }
+					];
+				}
 				published = null;
 				if ( cue ) play( cue );
 				return true;
@@ -1783,6 +1833,8 @@ step
 ================
 		*/
 		step( now: number ) {
+			const rentalUpdates = companionRentals.step( slots.values(), now );
+			for ( const item of rentalUpdates ) slots.set( item.slot, item );
 			mall.step( now );
 			const active = itemCooldowns.filter( row => now < row.startedAtMs + row.durationMs ),
 				expired = active.length !== itemCooldowns.length;
@@ -1807,7 +1859,7 @@ step
 				timedOut = true;
 				throw Error( "Inventory transaction timed out; reconnect to resynchronize" );
 			}
-			return unlocked || expired;
+			return unlocked || expired || rentalUpdates.length > 0;
 		},
 		/*
 ================

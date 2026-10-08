@@ -43,6 +43,9 @@ type ItemRef struct {
 	// must instantiate. It is a natural-key join, never a client-supplied
 	// RefObj id.
 	AssociatedCharacterCodename string
+	// RefItem+0x530 byte set from Desc2, including native 1/255 sentinels.
+	// Nil preserves the exact associated reference without a level suffix.
+	SummonLevelThresholds []uint8
 	// Skill consumables resolve the same authored Param1 reference as a skill.
 	AssociatedSkillCodename string
 	// Return-scroll Param3 text (column 123), consumed by v1.188 4A0380.
@@ -154,13 +157,15 @@ func (r *ItemRef) TypeFlags() uint16 {
 ==================
 ItemRefSource
 
-ItemRefSource resolves itemdata rows by codename. The itemdata extraction
-is shared cross-lane state; the bootstrap only reads it. A nil source
-behaves like the Node server with MISSION_EQUIP_ITEMS=0 (no wire items).
+ItemRefSource resolves itemdata rows by codename and reference id. The
+itemdata extraction is shared cross-lane state; the bootstrap only reads it.
+A nil source behaves like the Node server with MISSION_EQUIP_ITEMS=0
+(no wire items).
 ==================
 */
 type ItemRefSource interface {
 	ItemRefByCodename(codename string) (*ItemRef, bool)
+	ItemRefByID(id uint32) (*ItemRef, bool)
 }
 
 /*

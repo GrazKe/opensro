@@ -21,6 +21,7 @@ const LOGIN_AUTOCOMPLETE: Readonly<Record<string, string>> = {
 	account: "username",
 	password: "current-password"
 };
+const INPUT_FONT_PIXELS = 12;
 /*
 ================
 configureCredentialHints
@@ -631,7 +632,7 @@ export function createUiBridge(
 							insets[2]
 						], [ "paddingBottom", insets[3] ] ] as const
 					) {
-						const value = n + "px";
+						const value = n * scale + "px";
 						if ( el.style[key] !== value ) el.style[key] = value;
 					}
 				}
@@ -642,6 +643,11 @@ export function createUiBridge(
 					if ( el.step !== "1" ) el.step = "1";
 				}
 				if ( el.getAttribute( "aria-label" ) !== control.label ) el.setAttribute( "aria-label", control.label );
+				if ( control.valueText !== undefined ) {
+					if ( el.getAttribute( "aria-valuetext" ) !== control.valueText ) {
+						el.setAttribute( "aria-valuetext", control.valueText );
+					}
+				} else if ( el.hasAttribute( "aria-valuetext" ) ) el.removeAttribute( "aria-valuetext" );
 				// A locked text edit is read-only, never disabled: the browser takes
 				// focus away from a disabled element and does not give it back, so a
 				// lock that lasted one network round trip left the edit unfocused.
@@ -668,7 +674,10 @@ export function createUiBridge(
 				} else if ( el instanceof HTMLInputElement && el.value !== control.value && !composing ) {
 					el.value = control.value ?? "";
 				}
-				// UI pixels to CSS pixels (platform displayScale: the chosen screen size).
+				// The transparent editor's glyph metrics and hit box use the same
+				// physical-to-CSS conversion as the visible bitmap UI.
+				const fontSize = INPUT_FONT_PIXELS * scale + "px";
+				if ( el.style.fontSize !== fontSize ) el.style.fontSize = fontSize;
 				const [x, y, w, h] = control.rect,
 					left = box.left + x * scale,
 					top = box.top + y * scale,

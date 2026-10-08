@@ -41,16 +41,16 @@ function fixture( assetPath = "/assets/a.bin" ) {
 		mime: "application/octet-stream",
 		sha256: sha( b )
 	} ];
-	const header = Buffer.from( JSON.stringify( { format: "sro-asset-pack", version: 1, files: entries } ) );
+	const header = Buffer.from( JSON.stringify( { format: "sro-asset-pack", version: 2, files: entries } ) );
 	const bytes = new Uint8Array( 12 + header.length + a.length + b.length );
-	bytes.set( Buffer.from( "SROPACK1" ) );
+	bytes.set( Buffer.from( "SROPACK2" ) );
 	new DataView( bytes.buffer ).setUint32( 8, header.length, true );
 	bytes.set( header, 12 );
 	bytes.set( a, 12 + header.length );
 	bytes.set( b, 12 + header.length + a.length );
 	const pack = { path: "/assets/packs/fixture.bin", bytes: bytes.length, sha256: sha( bytes ), assetCount: 2 };
 	const manifest = {
-		version: 1,
+		version: 2,
 		groups: [ { name: "test", assetCount: 2, packs: [ pack ] } ],
 		assets: entries.map( e => ({ ...e, packPath: pack.path }) )
 	};
@@ -117,9 +117,9 @@ test("replacement members wait behind four shared downloads and do not fail worl
 				mime: "application/octet-stream",
 				sha256: sha( data )
 			};
-		const header = Buffer.from( JSON.stringify( { format: "sro-asset-pack", version: 1, files: [ entry ] } ) );
+		const header = Buffer.from( JSON.stringify( { format: "sro-asset-pack", version: 2, files: [ entry ] } ) );
 		const bytes = new Uint8Array( 13 + header.length );
-		bytes.set( Buffer.from( "SROPACK1" ) );
+		bytes.set( Buffer.from( "SROPACK2" ) );
 		new DataView( bytes.buffer ).setUint32( 8, header.length, true );
 		bytes.set( header, 12 );
 		bytes.set( data, 12 + header.length );
@@ -127,7 +127,7 @@ test("replacement members wait behind four shared downloads and do not fail worl
 		return { entry, pack, bytes };
 	} );
 	const manifest = {
-		version: 1,
+		version: 2,
 		groups: [ { name: "test", assetCount: 6, packs: fixtures.map( f => f.pack ) } ],
 		assets: fixtures.map( f => ({ ...f.entry, packPath: f.pack.path }) )
 	};
@@ -245,15 +245,18 @@ test("URL encoded filenames resolve against literal published names", async () =
 function disk( t ) {
 	const rows = new Map();
 	let denied = false, quota = false;
+	// A Cache takes a URL string or a Request (the store's inventory rebuild
+	// passes the Requests keys() returned).
+	const rowKey = request => request instanceof Request ? request.url : String( request );
 	const cache = {
 		async match( url ) {
-			return rows.get( String( url ) )?.clone();
+			return rows.get( rowKey( url ) )?.clone();
 		},
 		async keys() {
 			return [ ...rows.keys() ].map( url => new Request( url ) );
 		},
 		async delete( url ) {
-			return rows.delete( String( url ) );
+			return rows.delete( rowKey( url ) );
 		},
 		async put( url, response ) {
 			if ( denied ) throw Error( "denied" );
@@ -261,7 +264,7 @@ function disk( t ) {
 				quota = false;
 				throw new DOMException( "full", "QuotaExceededError" );
 			}
-			rows.set( String( url ), new Response( await response.arrayBuffer(), { headers: response.headers } ) );
+			rows.set( rowKey( url ), new Response( await response.arrayBuffer(), { headers: response.headers } ) );
 		}
 	};
 	const old = Object.getOwnPropertyDescriptor( globalThis, "caches" );
@@ -373,7 +376,7 @@ test("persistent payload eviction obeys the quota-derived budget without clearin
 		else delete globalThis.navigator;
 	} );
 	const { createPersistentAssets } = await load( "src/engine/runtime/assets/worker/packs/persistent.ts" ),
-		owner = createPersistentAssets();
+		owner = createPersistentAssets( quota => quota / 4 );
 	await Promise.all(
 		[ "a", "b", "c" ].map( key => owner.write( "http://localhost", key, Uint8Array.of( 1, 2, 3 ) ) )
 	);
@@ -383,6 +386,85 @@ test("persistent payload eviction obeys the quota-derived budget without clearin
 	assert.equal( owner.stats().evictions, 1 );
 	await owner.write( "http://localhost", "oversized", new Uint8Array( 9 ) );
 	assert.equal( d.rows.size, 2 );
+});
+
+test("the budget is half the quota between 512 MiB and 4 GiB", async () => {
+	const { budgetFromQuota } = await load( "src/engine/runtime/assets/worker/packs/persistent.ts" );
+	const MiB = 1024 * 1024, GiB = 1024 * MiB;
+	assert.equal( budgetFromQuota( undefined ), 512 * MiB );
+	assert.equal( budgetFromQuota( 100 * MiB ), 512 * MiB );
+	assert.equal( budgetFromQuota( 3 * GiB ), 1.5 * GiB );
+	assert.equal( budgetFromQuota( 600 * GiB ), 4 * GiB );
+});
+
+/*
+================
+quotaNavigator
+
+A navigator whose storage estimate reports quota bytes; restored after t.
+================
+*/
+function quotaNavigator( t, quota ) {
+	const old = Object.getOwnPropertyDescriptor( globalThis, "navigator" );
+	Object.defineProperty( globalThis, "navigator", {
+		configurable: true,
+		value: { storage: { estimate: async () => ({ quota }) } }
+	} );
+	t.after( () => {
+		if ( old ) Object.defineProperty( globalThis, "navigator", old );
+		else delete globalThis.navigator;
+	} );
+}
+
+test("startup entries survive eviction, also after a reload", async t => {
+	const d = disk( t );
+	quotaNavigator( t, 32 );
+	const { createPersistentAssets } = await load( "src/engine/runtime/assets/worker/packs/persistent.ts" );
+	const origin = "http://localhost", bytes = Uint8Array.of( 1, 2, 3 );
+	const first = createPersistentAssets( quota => quota / 4 );
+	first.setStartup( origin, [ "ui" ] );
+	for ( const digest of [ "ui", "world-a", "world-b" ] ) await first.write( origin, digest, bytes );
+	assert.ok( await first.read( origin, "ui", 3 ), "the startup entry outlives the eviction" );
+	assert.equal( await first.read( origin, "world-a", 3 ), null );
+	// A new owner rebuilds its inventory from Cache Storage; the manifest names the startup set again.
+	const second = createPersistentAssets( quota => quota / 4 );
+	second.setStartup( origin, [ "ui" ] );
+	await second.write( origin, "world-c", bytes );
+	assert.ok( await second.read( origin, "ui", 3 ) );
+	assert.equal( d.rows.size, 2 );
+});
+
+test("a write that cannot fit beside the startup entries is skipped, never stored over budget", async t => {
+	const d = disk( t );
+	quotaNavigator( t, 32 );
+	const { createPersistentAssets } = await load( "src/engine/runtime/assets/worker/packs/persistent.ts" );
+	const origin = "http://localhost", bytes = Uint8Array.of( 1, 2, 3 );
+	const store = createPersistentAssets( quota => quota / 4 );
+	store.setStartup( origin, [ "ui-a", "ui-b" ] );
+	for ( const digest of [ "ui-a", "ui-b", "world" ] ) await store.write( origin, digest, bytes );
+	const stored = [ ...d.rows.values() ].reduce(
+		( sum, response ) => sum + Number( response.headers.get( "content-length" ) ),
+		0
+	);
+	assert.ok( stored <= 8, `stored ${stored} bytes against an 8-byte budget` );
+	assert.equal( await store.read( origin, "world", 3 ), null );
+	assert.ok( store.stats().skipped >= 1 );
+});
+
+test("a warm entry the manifest names becomes protected; one only an older release named does not", async t => {
+	disk( t );
+	quotaNavigator( t, 32 );
+	const { createPersistentAssets } = await load( "src/engine/runtime/assets/worker/packs/persistent.ts" );
+	const origin = "http://localhost", bytes = Uint8Array.of( 1, 2, 3 );
+	const store = createPersistentAssets( quota => quota / 4 );
+	store.setStartup( origin, [ "old-ui" ] );
+	await store.write( origin, "old-ui", bytes );
+	await store.write( origin, "now-ui", bytes );
+	// The next release's manifest: now-ui is a startup entry, old-ui is not.
+	store.setStartup( origin, [ "now-ui" ] );
+	await store.write( origin, "world", bytes );
+	assert.ok( await store.read( origin, "now-ui", 3 ), "the warm entry is protected without a rewrite" );
+	assert.equal( await store.read( origin, "old-ui", 3 ), null, "the obsolete startup entry was evicted" );
 });
 
 test("large packs download verified ranges and persist only demanded members across reload", async t => {
@@ -454,15 +536,15 @@ test("manifest-driven batching serves hundreds of new filenames without per-asse
 			sha256: sha( data.subarray( i * size, (i + 1) * size ) )
 		})
 	);
-	const header = Buffer.from( JSON.stringify( { format: "sro-asset-pack", version: 1, files: entries } ) );
+	const header = Buffer.from( JSON.stringify( { format: "sro-asset-pack", version: 2, files: entries } ) );
 	const bytes = new Uint8Array( 8 << 20 );
-	bytes.set( Buffer.from( "SROPACK1" ) );
+	bytes.set( Buffer.from( "SROPACK2" ) );
 	new DataView( bytes.buffer ).setUint32( 8, header.length, true );
 	bytes.set( header, 12 );
 	bytes.set( data, 12 + header.length );
 	const pack = { path: "/assets/packs/generated.bin", bytes: bytes.length, sha256: sha( bytes ), assetCount: count };
 	const manifest = {
-		version: 1,
+		version: 2,
 		groups: [ { name: "generated", assetCount: count, packs: [ pack ] } ],
 		assets: entries.toReversed().map( e => ({ ...e, packPath: pack.path }) )
 	};
@@ -530,7 +612,7 @@ test("shared blocks preserve randomized member order, duplicate demand and faile
 			async order => {
 				const entries = Array.from(
 					{ length: 32 },
-					( _, i ) => ({ path: "/assets/random-" + i, offset: i * 64, length: 64 })
+					( _, i ) => ({ path: "/assets/random-" + i, offset: i * 64, length: 64, span: 64 })
 				);
 				const bytes = new Uint8Array( 12 + 32 * 64 );
 				for ( let i = 0; i < bytes.length; i++ ) bytes[i] = i % 251;
@@ -604,7 +686,7 @@ test("bounded publication drops optional writes under pressure and refreshes LRU
 		else delete globalThis.navigator;
 	} );
 	const { createPersistentAssets } = await load( "src/engine/runtime/assets/worker/packs/persistent.ts" ),
-		owner = createPersistentAssets();
+		owner = createPersistentAssets( quota => quota / 4 );
 	for ( const key of [ "a", "b" ] ) await owner.write( "http://localhost", key, Uint8Array.of( 1, 2, 3 ) );
 	await owner.read( "http://localhost", "a", 3 );
 	await owner.write( "http://localhost", "c", Uint8Array.of( 1, 2, 3 ) );
@@ -685,7 +767,7 @@ test("indexed animation selection preserves the original catalog override order"
 		animationDigest: "0".repeat( 64 )
 	}) );
 	const manifest = {
-		version: 1,
+		version: 2,
 		groups: [ {
 			name: "test",
 			assetCount: 2,
@@ -711,4 +793,92 @@ test("browser eviction between a warm read and lazy inventory initialization can
 	d.rows.clear();
 	await owner.write( "http://localhost", "new", Uint8Array.of( 2 ) );
 	assert.deepEqual( [ ...await owner.read( "http://localhost", "new", 1 ) ], [ 2 ] );
+});
+
+/*
+================
+storedPack
+
+An SROPACK2 pack with one gzip-stored member, padded to total bytes. The
+stored bytes come from the caller so a test can corrupt or inflate them.
+================
+*/
+function storedPack( member, stored, total = 0 ) {
+	const entry = {
+		path: "/assets/stored.bin",
+		offset: 0,
+		length: member.length,
+		mime: "application/octet-stream",
+		sha256: sha( member ),
+		stored: { length: stored.length, encoding: "gzip" }
+	};
+	const header = Buffer.from( JSON.stringify( { format: "sro-asset-pack", version: 2, files: [ entry ] } ) );
+	const prefix = Buffer.alloc( 12 );
+	prefix.write( "SROPACK2" );
+	prefix.writeUInt32LE( header.length, 8 );
+	const unpadded = Buffer.concat( [ prefix, header, stored ] );
+	const bytes = new Uint8Array(
+		Buffer.concat( [ unpadded, Buffer.alloc( Math.max( 0, total - unpadded.length ) ) ] )
+	);
+	const pack = {
+		path: "/assets/packs/stored-001-000000000000.bin",
+		bytes: bytes.length,
+		sha256: sha( bytes ),
+		assetCount: 1
+	};
+	const manifest = {
+		version: 2,
+		groups: [ { name: "test", assetCount: 1, packs: [ pack ] } ],
+		assets: [ { ...entry, packPath: pack.path } ]
+	};
+	// Whole packs answer whole; a range request gets exactly its slice.
+	const download = async ( url, limit, signal, range ) =>
+		url.endsWith( "manifest.json" ) ?
+			new TextEncoder().encode( JSON.stringify( manifest ) ) :
+			range ?
+			bytes.slice( range.start, range.end + 1 ) :
+			bytes;
+	return { download };
+}
+
+const STORED_MEMBER = new Uint8Array( Buffer.from( "a stored pack member ".repeat( 200 ) ) );
+
+for ( const [label, total] of [ [ "whole small pack", 0 ], [ "range-read large pack", 5 << 20 ] ] ) {
+	test(`a gzip-stored member decodes from a ${label}`, async () => {
+		const { download } = storedPack( STORED_MEMBER, gzipSync( STORED_MEMBER ), total );
+		const packs = createPacks( download );
+		const bytes = await packs.read(
+			new URL( "http://localhost/assets/stored.bin" ),
+			1 << 20,
+			new AbortController().signal
+		);
+		assert.deepEqual( bytes, STORED_MEMBER );
+		assert.ok( packs.stats().storedBytes < packs.stats().decodedBytes, "the member travelled compressed" );
+		packs.dispose();
+	});
+}
+
+test("corrupted stored bytes are refused, never returned", async () => {
+	const stored = gzipSync( STORED_MEMBER );
+	// Flip a byte inside the deflate data: gzip itself or the SHA-256 must catch it.
+	stored[stored.length >> 1] ^= 0xff;
+	const { download } = storedPack( STORED_MEMBER, stored, 5 << 20 );
+	const packs = createPacks( download );
+	await assert.rejects(
+		packs.read( new URL( "http://localhost/assets/stored.bin" ), 1 << 20, new AbortController().signal )
+	);
+	packs.dispose();
+});
+
+test("a stored member that inflates past its declared length is refused", async () => {
+	// The row declares the member's length; the stream decodes to far more.
+	const bomb = gzipSync( Buffer.alloc( 1 << 20 ) );
+	const declared = new Uint8Array( Buffer.alloc( bomb.length + 64 ) );
+	const { download } = storedPack( declared, bomb, 5 << 20 );
+	const packs = createPacks( download );
+	await assert.rejects(
+		packs.read( new URL( "http://localhost/assets/stored.bin" ), 1 << 22, new AbortController().signal ),
+		/exceeds byte limit|wrong length|SHA-256/
+	);
+	packs.dispose();
 });

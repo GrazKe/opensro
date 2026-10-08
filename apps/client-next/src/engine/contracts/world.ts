@@ -119,6 +119,10 @@ export interface EntityState {
 	readonly guildCrests?: readonly [number, number, number];
 	readonly guildWarTeam?: number;
 	readonly arenaTeam?: number;
+	// The hover cursor's attack verdict for a player or a pet (6875F0), kept
+	// by the worker: HOVER_ATTACK_PLAIN without Alt, HOVER_ATTACK_ALT with it
+	// (foundation/gameplay/player-attack.ts).
+	readonly hoverAttack?: number;
 	readonly appearanceState?: readonly number[];
 	readonly groundItem?: {
 		readonly typeFlags: number;
@@ -156,8 +160,11 @@ export interface EntityState {
 ================
 WorldEvent
 
-Events retain their wire order across worker batches. Native envelopes stay
-available for packet families that do not yet own a semantic projection.
+Lifecycle and feedback events retain their wire order across worker batches.
+Queued gameplay snapshots may merge at the first snapshot's position until
+a reset or batch handoff; consumers read gameplay after applying the whole
+batch. Native envelopes stay available for packet families that do not yet
+own a semantic projection.
 ================
 */
 export type WorldEvent =

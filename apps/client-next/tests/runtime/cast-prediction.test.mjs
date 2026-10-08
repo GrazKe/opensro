@@ -269,6 +269,7 @@ function pressAt( dx, ui = {}, before = game => {}, after = game => {} ) {
 				cooldownMs: 0,
 				actionMs: 1000,
 				range: 60,
+				admit: { weaponKinds: [ 255, 255 ] },
 				masteries: [ { ID: 0, Level: 0 }, { ID: 0, Level: 0 } ],
 				prerequisites: [ { ID: 0, Level: 0 }, { ID: 0, Level: 0 }, { ID: 0, Level: 0 } ],
 				...ui
@@ -383,4 +384,56 @@ test("the windup sound plays at the press, not when the server answers", () => {
 	assert.equal( windup().length, 1, "the adopted cast replayed the windup" );
 	assert.equal( p.error(), null );
 	p.dispose();
+});
+
+test("a stunned caster's press predicts neither its cast nor its cooldown (BUG-066)", () => {
+	const stun = Buffer.alloc( 12 );
+	stun.writeUInt32LE( LOCAL_GID );
+	stun[6] = 4; // the abnormal word follows
+	stun.writeUInt32LE( 0x4000, 7 ); // stun; 58DAEF refuses the cast (0x3009)
+	stun[11] = 1; // stun carries a level byte
+	for ( const stunned of [ false, true ] ) {
+		/** @type {ReturnType<ReturnType<typeof createGameplay>["take"]>[]} */
+		const taken = [];
+		pressAt( 50, { cooldownMs: 5000 }, game => {
+			if ( stunned ) game.receive( { opcode: 0x33a6, payload: stun }, 900 );
+		}, game => {
+			taken.push( game.take() );
+		} );
+		const state = taken[0];
+		const predicted = state?.castPrediction?.skill === 30;
+		const standIn = (state?.skillCooldowns ?? []).some( row =>
+			row.skill === 30 && row.provisionalUntilMs !== undefined
+		);
+		// The free caster proves the press would predict both; the stunned one must not.
+		assert.equal( predicted, !stunned, `cast prediction when ${stunned ? "stunned" : "free"}` );
+		assert.equal( standIn, !stunned, `cooldown stand-in when ${stunned ? "stunned" : "free"}` );
+	}
+});
+
+test("a press for a weapon the caster lacks predicts neither its cast nor its cooldown (BR-261007-0624)", () => {
+	// A sword row (TID4 2) pressed bare-handed (TID4 1): 58D480 refuses 0x300D.
+	for ( const weaponKinds of [ [ 255, 255 ], [ 1, 2 ], [ 2, 2 ] ] ) {
+		/** @type {ReturnType<ReturnType<typeof createGameplay>["take"]>[]} */
+		const taken = [];
+		pressAt( 50, { cooldownMs: 5000, admit: { weaponKinds } }, () => {}, game => {
+			taken.push( game.take() );
+		} );
+		const state = taken[0], admitted = weaponKinds[0] !== 2;
+		const standIn = (state?.skillCooldowns ?? []).some( row =>
+			row.skill === 30 && row.provisionalUntilMs !== undefined
+		);
+		assert.equal( state?.castPrediction?.skill === 30, admitted, `cast prediction for ${weaponKinds}` );
+		assert.equal( standIn, admitted, `cooldown stand-in for ${weaponKinds}` );
+	}
+});
+
+test("a row without admission inputs is sent but never predicted", () => {
+	/** @type {ReturnType<ReturnType<typeof createGameplay>["take"]>[]} */
+	const taken = [];
+	pressAt( 50, { cooldownMs: 5000, admit: undefined }, () => {}, game => {
+		taken.push( game.take() );
+	} );
+	assert.equal( taken[0]?.castPrediction, undefined );
+	assert.equal( (taken[0]?.skillCooldowns ?? []).some( row => row.provisionalUntilMs !== undefined ), false );
 });

@@ -111,6 +111,9 @@ type Deps struct {
 		stranded bool,
 		rescueFound bool,
 	)
+	// AdoptEntrySpawn commits a spawn the entry moved (lift or rescue) to the
+	// live world and the record, so server and client agree on the stand.
+	AdoptEntrySpawn     func(divisionID, characterName string, spawn simulation.Spawn)
 	CanEnterWorldRegion func(character *Character, regionID uint16) bool
 	PlayerBaseStats     func(character *Character) (wire.BaseStats, error)
 
@@ -123,7 +126,10 @@ type Deps struct {
 
 	SystemMessages    func(character *Character) interface{}
 	ResolveDivisionID func(requestDivisionID string) string
-	OnWorldBound      func(
+	// LockPublication orders bootstrap snapshots with action/tick inventory
+	// receipts. The returned release runs only after the full batch is queued.
+	LockPublication func(divisionID string) func()
+	OnWorldBound    func(
 		session *transport.Session,
 		divisionID string,
 		character *Character,
@@ -286,6 +292,7 @@ func (d *Deps) ReentryPackets(divisionID, characterName string) ([]Packet, bool)
 	projection := *d
 	projection.RestoreEntryEffects = nil // Caller already owns the live actor transaction.
 	projection.PrepareEntry = nil
+	projection.AdoptEntrySpawn = nil
 	result := Build(&projection, BootstrapRequest{
 		DivisionID:    divisionID,
 		CharacterName: characterName,
@@ -303,6 +310,9 @@ PreparedReentry
 type PreparedReentry struct {
 	Packets []Packet
 	Spawn   simulation.Spawn
+	// InventorySize is the capacity the packets present; the committing
+	// owner adopts it on the live record (domain.AdoptInventorySize).
+	InventorySize uint8
 }
 
 /*
@@ -320,7 +330,12 @@ func (d *Deps) PrepareReentry(divisionID string, character *Character) (Prepared
 			return PreparedReentry{}, false
 		}
 	}
-	result := buildCharacterProjection(d, divisionID, snapshot)
+	projection := *d
+	// The caller holds the division lock and commits the returned stand only
+	// after preparation succeeds. Login adoption would re-enter that lock.
+	projection.AdoptEntrySpawn = nil
+	snapshot.PresentInventoryExpansion()
+	result := buildCharacterProjection(&projection, divisionID, snapshot)
 	packets, ok := d.encodeReentry(result)
 	if !ok {
 		return PreparedReentry{}, false
@@ -328,7 +343,7 @@ func (d *Deps) PrepareReentry(divisionID string, character *Character) (Prepared
 	spawn := result.LocalPlayerEntry.StartProfile
 	return PreparedReentry{Packets: packets, Spawn: simulation.Spawn{
 		RegionID: uint16(spawn.RegionID), X: spawn.X, Y: spawn.Y, Z: spawn.Z, Angle: uint16(spawn.Angle),
-	}}, true
+	}, InventorySize: snapshot.InventoryCapacity()}, true
 }
 
 /*
@@ -353,7 +368,29 @@ func (d *Deps) encodeReentry(result *BootstrapResult) ([]Packet, bool) {
 	packets := make([]Packet, 0, len(result.Packets)+1)
 	packets = append(packets, result.Packets[0], NewPacket(transport.OpEnterWorldResult, payload))
 	packets = append(packets, result.Packets[1:]...)
+	d.adoptEncodedInventory(result)
 	return packets, true
+}
+
+/*
+================
+adoptEncodedInventory
+
+Only the complete encoded entry can make pending slots usable. The authority
+door preserves any additional quest reward paid since preparation began.
+Prepared resurrection entries have no live owner and commit in their caller.
+================
+*/
+func (d *Deps) adoptEncodedInventory(result *BootstrapResult) {
+	if result.inventoryOwner == nil {
+		return
+	}
+	owner := result.inventoryOwner
+	presented := result.Character.InventoryCapacity()
+	d.Mutate(owner, "inventory-expansion", func() {
+		owner.AdoptInventorySize(presented)
+	})
+	result.inventoryOwner = nil
 }
 
 // Validate rejects incomplete production composition before gameplay starts.
@@ -373,6 +410,7 @@ func (d *Deps) Validate() error {
 	require("Roster", d.Roster == nil)
 	require("Characters", d.Characters == nil)
 	require("ResolveDivisionID", d.ResolveDivisionID == nil)
+	require("LockPublication", d.LockPublication == nil)
 	require("MutateCharacter", d.MutateCharacter == nil)
 	require("MutateCharacters", d.MutateCharacters == nil)
 	require("UpdateCharacter", d.UpdateCharacter == nil)
@@ -389,6 +427,7 @@ func (d *Deps) Validate() error {
 	require("SpawnTerrainHeight", d.SpawnTerrainHeight == nil)
 	require("SpawnSurfaceHeight", d.SpawnSurfaceHeight == nil)
 	require("RelocateStrandedSpawn", d.RelocateStrandedSpawn == nil)
+	require("AdoptEntrySpawn", d.AdoptEntrySpawn == nil)
 	require("CanEnterWorldRegion", d.CanEnterWorldRegion == nil)
 	require("PlayerBaseStats", d.PlayerBaseStats == nil)
 	require("CommunitySeedFramesFor", d.CommunitySeedFramesFor == nil)

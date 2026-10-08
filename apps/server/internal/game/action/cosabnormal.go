@@ -14,6 +14,7 @@ package action
 
 import (
 	"fmt"
+	"opensro.online/server/internal/domain"
 	"strings"
 	"sync"
 
@@ -192,6 +193,12 @@ func (o *cosAbnormalOwner) commit() {
 	if o.c == nil || o.pet == nil {
 		return
 	}
+	if o.ref != nil && o.ref.TidWord>>11 == domain.PickupPetBand {
+		// Inference: pickup immunity also retires old periodic-effect blocks;
+		// rental expiration is owned by TickCompanionSatiety, never combat.
+		o.rt.storeCosAbnormal(o.division, o.c.Name, o.pet.GID, nil)
+		return
+	}
 	if o.fatal || o.pet.CurrentHP == 0 {
 		pet := o.pet
 		if o.aliveBefore && !o.died {
@@ -230,7 +237,8 @@ A missing or depleted pet cannot admit a new status.
 ================
 */
 func (o *cosAbnormalOwner) Alive() bool {
-	return o.c != nil && o.pet != nil && o.pet.CurrentHP > 0
+	return o.c != nil && o.pet != nil && o.pet.CurrentHP > 0 &&
+		(o.ref == nil || o.ref.TidWord>>11 != domain.PickupPetBand)
 }
 
 /*
@@ -623,7 +631,9 @@ func (rt *Runtime) monsterHitSummonedCOS(divisionID string, instance monster.Ins
 	}
 	result.TargetAlive = true
 	ref, validRef := rt.cosReference(snapshot.CompanionByGID(pet.GID))
-	if !validRef {
+	// CGObjMob_HostilityBodyStatus (5299E0) refuses a grab pet first: its
+	// target's slot 0x43C is CGObj_IsPickPetCOS (483930).
+	if !validRef || ref.TidWord>>11 == domain.PickupPetBand {
 		return result
 	}
 	mover, exists := rt.Monsters.Mover(divisionID, instance.Gid)

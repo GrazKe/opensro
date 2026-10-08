@@ -9,6 +9,7 @@ counts, required outdoor regions and referenced world-map images.
 
 ===========================================================================
 */
+import { compactStatePath } from "../build/compactRemovals.mjs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -16,11 +17,11 @@ import { listFiles } from "../build/shared/fsUtils.mjs";
 import { toPublicImagePath } from "../build/shared/assetPaths.mjs";
 import { collectWorldMapImageReferences } from "../build/shared/worldMapImageReferences.mjs";
 import { validateServerGameDataArchive } from "../build/server/serverGameDataArchive.mjs";
-import { generatedRoot, publicAssetsRoot, rebuildRoot, serverGameDataRoot } from "../build/world/paths.mjs";
+import { generatedRoot, publicAssetsRoot, serverGameDataRoot } from "../build/world/paths.mjs";
 
 const generatedAssetsRoot = path.join( generatedRoot, "intermediate" );
 const serverGameDataArchivePath = `${serverGameDataRoot}.srogz`;
-const statePath = path.join( rebuildRoot, ".state", "compact-assets.json" );
+const statePath = compactStatePath( generatedRoot );
 const manifestPath = path.join( publicAssetsRoot, "packs", "manifest.json" );
 const originalPk2Bytes = 2_356_998_144;
 const maximumCompactBytes = Math.floor( originalPk2Bytes * 0.8 );
@@ -145,6 +146,11 @@ function assertOutdoorReleaseProjection( manifest ) {
 /*
 ================
 assertWorldMapReleaseProjection
+
+Every world-map image must load at startup. A path has one owning group
+(assetPackOwnership.mjs), and the UI preload sweep (native-ui) claims the
+map images it draws before game-images is filled, so either startup group
+satisfies the map; only the load class matters.
 ================
 */
 function assertWorldMapReleaseProjection( manifest, closure ) {
@@ -161,14 +167,15 @@ function assertWorldMapReleaseProjection( manifest, closure ) {
 		);
 	}
 
-	const group = manifest.groups?.find( ( candidate ) => candidate.name === "game-images" );
-	if ( !group || group.load !== "startup" || group.assetCount === 0 || group.packs?.length === 0 ) {
-		fail( "world-map assets require a populated startup-resident game-images group." );
-	}
+	const startupGroups = new Set(
+		(manifest.groups ?? [])
+			.filter( ( group ) => group.load === "startup" && group.assetCount > 0 && group.packs?.length !== 0 )
+			.map( ( group ) => group.name )
+	);
 	const assets = new Map( (manifest.assets ?? []).map( ( asset ) => [ asset.path.toLowerCase(), asset ] ) );
 	for ( const ddjPath of closure.references ) {
 		const publicPath = toPublicImagePath( "Media_extracted", ddjPath );
-		if ( assets.get( publicPath.toLowerCase() )?.group !== "game-images" ) {
+		if ( !startupGroups.has( assets.get( publicPath.toLowerCase() )?.group ) ) {
 			fail( `world-map dependency is absent from startup packs: ${publicPath}` );
 		}
 	}

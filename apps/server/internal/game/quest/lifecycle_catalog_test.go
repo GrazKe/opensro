@@ -89,12 +89,13 @@ func TestEveryLoadedQuestSurvivesRestartAndCompletesOnce(t *testing.T) {
 			}
 			open()
 			t.Cleanup(func() { authority.Close() })
-			level, gold, experience := max(int64(60), int64(def.Level)), int64(1000), int64(0)
+			// A turn-in fee leaves the reward's 1000 + RewardGold behind.
+			level, gold, experience := max(int64(60), int64(def.Level)), 1000+def.TurnInGold, int64(0)
 			model := "CHAR_CH_MAN_ADVENTURER"
 			if def.CountryByte == 1 {
 				model = "CHAR_EU_MAN_NOBLE"
 			}
-			character = &enterworld.Character{Name: "questmatrix", ModelCodename: model, Level: &level, Gold: &gold, Experience: &experience, CompletedQuestIds: append([]uint32(nil), def.RequiredQuestIDs...)}
+			character = &enterworld.Character{Name: "questmatrix", ModelCodename: model, Level: &level, Gold: &gold, Experience: &experience, CompletedQuestIds: completedPrerequisites(def)}
 			for _, id := range def.RequiredActiveQuestIDs {
 				parent, exists := defs.ByRefID(id)
 				if !exists {
@@ -130,14 +131,21 @@ func TestEveryLoadedQuestSurvivesRestartAndCompletesOnce(t *testing.T) {
 					}
 				}
 			}
+			missingSets := [][]uint32{}
 			for _, missing := range def.RequiredQuestIDs {
+				missingSets = append(missingSets, slices.DeleteFunc(completedPrerequisites(def), func(id uint32) bool { return id == missing }))
+			}
+			if len(def.RequiredAnyQuestIDs) > 0 {
+				missingSets = append(missingSets, slices.Clone(def.RequiredQuestIDs))
+			}
+			for _, without := range missingSets {
 				authority.UpdateCharacter(character, "test-prerequisite", func() bool {
-					character.CompletedQuestIds = slices.DeleteFunc(slices.Clone(def.RequiredQuestIDs), func(id uint32) bool { return id == missing })
+					character.CompletedQuestIds = without
 					return true
 				})
 				before := snapshot()
-				if _, err := rt.StartQuest(character, def.Codename); err == nil {
-					t.Fatalf("accepted without predecessor %d", missing)
+				if _, err := rt.StartQuest(character, acceptToken(def)); err == nil {
+					t.Fatalf("accepted with only predecessors %v", without)
 				}
 				if !bytes.Equal(before, snapshot()) {
 					t.Fatal("prerequisite refusal mutated authority")
@@ -149,13 +157,13 @@ func TestEveryLoadedQuestSurvivesRestartAndCompletesOnce(t *testing.T) {
 				}
 			}
 			authority.UpdateCharacter(character, "test-prerequisites", func() bool {
-				character.CompletedQuestIds = slices.Clone(def.RequiredQuestIDs)
+				character.CompletedQuestIds = completedPrerequisites(def)
 				return true
 			})
 			assertIneligible := func(reason string) {
 				t.Helper()
 				before := snapshot()
-				if _, err := rt.StartQuest(character, def.Codename); err == nil {
+				if _, err := rt.StartQuest(character, acceptToken(def)); err == nil {
 					t.Fatalf("accepted despite %s", reason)
 				}
 				if !bytes.Equal(before, snapshot()) {
@@ -202,18 +210,27 @@ func TestEveryLoadedQuestSurvivesRestartAndCompletesOnce(t *testing.T) {
 					character.ActiveQuests = append(character.ActiveQuests, BuildActiveQuestRecord(def, 0))
 					return true
 				})
-			} else if _, err := rt.StartQuest(character, def.Codename); err != nil {
+			} else if _, err := rt.StartQuest(character, acceptToken(def)); err != nil {
 				t.Fatal(err)
 			}
 			restart()
 			before := snapshot()
-			if _, err := rt.StartQuest(character, def.Codename); err == nil {
+			if _, err := rt.StartQuest(character, acceptToken(def)); err == nil {
 				t.Fatal("duplicate acceptance")
 			}
 			if !bytes.Equal(before, snapshot()) {
 				t.Fatal("duplicate changed state")
 			}
 			complete := func() (OpResult, error) {
+				if def.EndNpcCodename != "" && len(def.RewardChoices) > 0 {
+					// A selection quest completes through one of the rows its
+					// end NPC offers this character, as a player picks one.
+					rows := rewardChoiceOptions(def, enterworld.NativeCountryByte9C(character))
+					if len(rows) == 0 {
+						t.Fatal("selection quest offers this character no reward row")
+					}
+					return rt.AdvanceNpcQuest(character, rows[0].Codename, def.EndNpcCodename)
+				}
 				if def.EndNpcCodename != "" {
 					return rt.AdvanceNpcQuest(character, def.Codename, def.EndNpcCodename)
 				}
@@ -377,7 +394,7 @@ func TestEveryLoadedQuestSurvivesRestartAndCompletesOnce(t *testing.T) {
 			if !bytes.Equal(before, snapshot()) {
 				t.Fatal("duplicate reward mutated authority")
 			}
-			_, err = rt.StartQuest(character, def.Codename)
+			_, err = rt.StartQuest(character, acceptToken(def))
 			canRepeat := def.AcceptanceUnavailable == "" && (def.Repeatable || def.MaxCompletions > 1)
 			if (err == nil) != canRepeat {
 				t.Fatalf("repeatability=%v error=%v", def.Repeatable, err)
@@ -546,4 +563,35 @@ func fixtureKillRank(def *Definition) uint8 {
 		return def.KillRanks[0]
 	}
 	return 0
+}
+
+/*
+================
+acceptToken
+
+What the offer dialogue accepts def with: a branching offer (Rahid 2)
+needs one of its replies, so the catalog walk takes the first.
+================
+*/
+func acceptToken(def *Definition) string {
+	if len(def.OfferBranches) > 0 {
+		return branchToken(def.Codename, 0)
+	}
+	return def.Codename
+}
+
+/*
+================
+completedPrerequisites
+
+The completed quests that admit def: every required quest and the first
+of its any-of list.
+================
+*/
+func completedPrerequisites(def *Definition) []uint32 {
+	completed := slices.Clone(def.RequiredQuestIDs)
+	if len(def.RequiredAnyQuestIDs) > 0 {
+		completed = append(completed, def.RequiredAnyQuestIDs[0])
+	}
+	return completed
 }

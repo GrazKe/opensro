@@ -188,7 +188,7 @@ func (rt *Runtime) CaptureQuestTrap(c *enterworld.Character, skill, monster stri
 			return []wire.Frame{questNotification(rule.already)}, false
 		}
 		for _, row := range c.MissionInventory {
-			if row.Slot >= int64(inventory.EquipmentSlotEnd) && row.Slot < int64(inventory.BagSlotEnd) && row.Codename == rule.item {
+			if inventory.InBag(c, row.Slot) && row.Codename == rule.item {
 				return []wire.Frame{questNotification(rule.already)}, false
 			}
 		}
@@ -215,7 +215,7 @@ func (rt *Runtime) CaptureQuestTrap(c *enterworld.Character, skill, monster stri
 		frames = append(frames, updates...)
 		record := c.ActiveQuests[at]
 		record.RemainingMinutes = rule.minutes
-		record.Progress = packQuestMinutes(rule.minutes)
+		record.Progress = packQuestMinutes(uint16(rule.minutes))
 		record.Flags |= 4
 		c.ActiveQuests[at] = record
 		record.Flags = 4

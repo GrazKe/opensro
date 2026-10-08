@@ -141,7 +141,7 @@ func (rt *Runtime) applyInventoryMove(
 			return false
 		}
 
-		inv := inventory.New(invItemsFromRows(character.MissionInventory))
+		inv := bagOf(character)
 
 		// The character-vs-itemdata equip gates (level/stats/gender/country):
 		// consulted by both Transfer equip legs around the exclusivity scan.
@@ -218,16 +218,11 @@ func (rt *Runtime) applyInventoryMove(
 
 		// THE M1 CONTRACT: every transfer that touched a socket < 13 appends
 		// its visual pushes behind the 0xB06D row.
-		visuals := FramesFromSocketVisuals(
-			enterworld.ObjectIDForCharacter(character),
-			inv.EquipVisualChanges(request.SourceSlot, request.DestSlot),
-		)
+		changes := inv.EquipVisualChanges(request.SourceSlot, request.DestSlot)
 		for _, move := range subMoves {
-			visuals = append(visuals, FramesFromSocketVisuals(
-				enterworld.ObjectIDForCharacter(character),
-				inv.EquipVisualChanges(move.SourceSlot, move.DestSlot),
-			)...)
+			changes = append(changes, inv.EquipVisualChanges(move.SourceSlot, move.DestSlot)...)
 		}
+		visuals := FramesFromSocketVisuals(enterworld.ObjectIDForCharacter(character), changes)
 
 		result = OpResult{
 			Frames: append([]wire.Frame{
@@ -243,8 +238,9 @@ func (rt *Runtime) applyInventoryMove(
 			}, visuals...),
 			// The spawn row is the only other carrier of worn equipment, so a
 			// viewer that already sees this character needs the same pushes:
-			// 777800/777980 resolve any gid, not just the local player's.
-			Broadcast: visuals,
+			// 777800/777980 resolve any gid, not just the local player's. The
+			// owner holds its own references; a viewer gets them first.
+			Broadcast: append(rt.socketVisualReferences(changes), visuals...),
 		}
 
 		if statFrame != nil {
@@ -283,7 +279,7 @@ func (rt *Runtime) applyGroundDrop(
 			return false
 		}
 
-		inv := inventory.New(invItemsFromRows(character.MissionInventory))
+		inv := bagOf(character)
 
 		// The native type-7 wire has no quantity field: the whole row goes.
 		dropped, fault := inv.Drop(sourceSlot)

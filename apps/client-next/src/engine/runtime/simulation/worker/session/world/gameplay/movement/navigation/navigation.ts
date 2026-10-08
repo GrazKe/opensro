@@ -26,7 +26,7 @@ import {
 	regionMoveDestination,
 	regionMoveContinuation
 } from "@/engine/foundation/navigation/region-move";
-import { linkPassages } from "@/engine/foundation/navigation/topology";
+import { linkedEntry, linkPassages } from "@/engine/foundation/navigation/topology";
 import { admitObjectProduct } from "./admission";
 import {
 	navHeight,
@@ -284,6 +284,19 @@ export function createNavigation() {
 				undefined :
 				{ placement: matches[0]!, cell: anchor.cell };
 		},
+		/*
+		================
+		available
+
+		Admission is a coverage question. A distant blocked goal does not
+		prevent walking the clear approach to it.
+		================
+		*/
+		available( pose: Pose ) {
+			return pose.regionId & 0x8000 ?
+				complete && origin === pose.regionId :
+				cell( pose.regionId, pose.x, pose.z ) !== "unknown";
+		},
 		stats: () => index?.stats() ?? { queries: 0, visited: 0, candidates: 0, bytes: 0 },
 		/*
 		================
@@ -534,6 +547,7 @@ export function createNavigation() {
 				owners?: readonly import("@/engine/foundation/navigation/dungeon-ownership").NavOwnerSpan[];
 				context?: number;
 				events?: readonly NavigationEvent[];
+				status?: number;
 				owner?: { placement: number; cell: number; };
 				slide: boolean;
 				normal?: readonly number[];
@@ -544,6 +558,7 @@ export function createNavigation() {
 			if ( output ) {
 				output.owners = [];
 				output.events = [];
+				output.status = 0;
 				output.owner = undefined;
 				output.normal = undefined;
 				output.cell = undefined;
@@ -639,6 +654,9 @@ export function createNavigation() {
 				) return null;
 				if ( dungeon && !ownerPath ) return null;
 				const passages = linkPassages( objects, fromPoint, toPoint, !!ownerPath );
+				let transfer = !dungeon && ownerPath ?
+					linkedEntry( objects, fromPoint, toPoint, ownerPath.spans ) :
+					null;
 				let contact = Infinity, contactKey = Infinity, retainedFraction = 1;
 				let response: ReturnType<typeof navContactDetail> = null;
 				if ( (globalThis as any).NAVDBG ) console.log( "CLIPSTART", { from, to, owner: ownerPath?.spans } );
@@ -736,7 +754,17 @@ export function createNavigation() {
 						} );
 					}
 				}
-				if ( response?.point ) {
+				if ( transfer && contact < transfer.fraction - 1e-9 ) transfer = null;
+				if ( transfer ) {
+					status = transfer.status;
+					retainedFraction = contactKey = transfer.fraction;
+					to = { ...to, x: transfer.point[0]! - ox, y: transfer.point[1]!, z: transfer.point[2]! - oz };
+					reachedOwner = transfer.owner;
+					if ( output ) {
+						output.owner = transfer.owner;
+						output.owners = ownerPath!.spans.filter( s => s.from < transfer!.fraction );
+					}
+				} else if ( response?.point ) {
 					status = response.status;
 					if ( output && status === 1 ) {
 						output.cell = response.cell;
@@ -746,6 +774,7 @@ export function createNavigation() {
 					retainedFraction = contact;
 					to = { ...to, x: response.point[0] - ox, y: response.point[1], z: response.point[2] - oz };
 				} else if ( contact <= 1 ) {
+					status |= 1;
 					const t = Math.max(
 						0,
 						contact - .01 / Math.max( Math.abs( to.x - from.x ), Math.abs( to.z - from.z ), .01 )
@@ -758,7 +787,7 @@ export function createNavigation() {
 						z: from.z + (to.z - from.z) * t
 					};
 				}
-				if ( !dungeon ) {
+				if ( !dungeon && !transfer ) {
 					const resolved = ownerPath ?
 						terrainOwnerPath(
 							objects,
@@ -787,6 +816,7 @@ export function createNavigation() {
 				}
 				if ( dungeon ) {
 					if ( ownerPath!.stop < retainedFraction ) {
+						status |= 1;
 						const fraction = Math.max( 0, ownerPath!.stop - .01 / requestedSpan );
 						const ratio = fraction / Math.max( retainedFraction, 1e-12 );
 						to = {
@@ -858,6 +888,7 @@ export function createNavigation() {
 						if ( (globalThis as any).NAVDBG ) {
 							console.log( "TILEBLOCK", { t, x, z, sx, sz, a, b, c, fx: from.x, fz: from.z } );
 						}
+						status |= 1;
 						const rest = Math.max( 0, t - .01 / Math.max( Math.abs( dx ), Math.abs( dz ) ) );
 						const point = {
 							...from,
@@ -892,12 +923,17 @@ export function createNavigation() {
 				return null;
 			};
 			if ( from.regionId === to.regionId && from.x === to.x && from.y === to.y && from.z === to.z ) {
+				if ( output ) output.owner = output.sourceOwner;
 				return { ...from };
 			}
-			if ( !regionMoveAllowed( from, to ) ) return null;
+			if ( !regionMoveAllowed( from, to ) ) {
+				if ( output ) output.status = 0x10000000;
+				return null;
+			}
 			let start = from;
 			for ( let calls = 1; calls <= 6; calls++ ) {
 				const target = regionMoveDestination( to, start.regionId ), point = segment( start, target );
+				if ( output ) output.status = status;
 				const decision = regionMoveContinuation(
 					start,
 					target,
@@ -907,11 +943,15 @@ export function createNavigation() {
 				if ( decision === "stop" ) {
 					return point;
 				}
-				if ( decision === "reject" ) return null;
+				if ( decision === "reject" ) {
+					if ( output ) output.status = 0x10000000;
+					return null;
+				}
 				// Continue from the reached cell, never the original source cell.
 				sourceOwner = reachedOwner;
 				start = point!;
 			}
+			if ( output ) output.status = 0x10000000;
 			return null;
 		},
 		/*

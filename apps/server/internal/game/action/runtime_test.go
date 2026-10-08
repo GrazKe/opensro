@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"opensro.online/server/internal/domain"
 	"opensro.online/server/internal/game/enterworld"
 	"opensro.online/server/internal/game/item/grounditem"
 	"opensro.online/server/internal/game/item/inventory"
@@ -496,8 +497,9 @@ func TestM1VisualsAlwaysRideBehindSocketTransfers(t *testing.T) {
 			MovementType: wire.MoveTypeInventory, SourceSlot: 20, DestSlot: 6, Quantity: 1,
 		}))
 		assertOpcodes(t, result.Frames, wire.OpItemMoveResponse, wire.OpEquipVisual, wire.OpBaseStats)
-		assertOpcodes(t, result.Broadcast, wire.OpEquipVisual)
-		if !bytes.Equal(result.Broadcast[0].Payload, result.Frames[1].Payload) {
+		// A viewer may lack the worn item's reference (#340): it leads.
+		assertOpcodes(t, result.Broadcast, opCommerceItemReferences, wire.OpEquipVisual)
+		if !bytes.Equal(result.Broadcast[1].Payload, result.Frames[1].Payload) {
 			t.Fatal("viewers were sent a different equip visual than the owner")
 		}
 		stats := result.Frames[2].Payload
@@ -554,9 +556,9 @@ func TestM1VisualsAlwaysRideBehindSocketTransfers(t *testing.T) {
 			MovementType: wire.MoveTypeInventory, SourceSlot: 6, DestSlot: 20, Quantity: 1,
 		}))
 		assertOpcodes(t, result.Frames, wire.OpItemMoveResponse, wire.OpEquipVisual, wire.OpBaseStats)
-		assertOpcodes(t, result.Broadcast, wire.OpEquipVisual)
+		assertOpcodes(t, result.Broadcast, opCommerceItemReferences, wire.OpEquipVisual)
 
-		visual, _ := wire.DecodeEquipVisual(result.Broadcast[0].Payload, equipWord)
+		visual, _ := wire.DecodeEquipVisual(result.Broadcast[1].Payload, equipWord)
 		if visual.RefObjID != 11459 || visual.OptLevel != 5 {
 			t.Fatalf("viewer visual = %+v, want the swapped-in 11459 opt 5", visual)
 		}
@@ -831,7 +833,7 @@ func TestInventoryRowRoundTrip(t *testing.T) {
 			TypeFlags: 0x132C, Plus: 3, VarianceBits: "9223372036854775808",
 			Durability: 69, StackCount: 1},
 	}
-	items := invItemsFromRows(rows)
+	items := invItemsFromRowsWithin(rows, int64(domain.DefaultInventorySize))
 	if len(items) != 1 || items[0].VarianceBits != 0x8000000000000000 {
 		t.Fatalf("armed rows = %+v, want the top-bit variance", items)
 	}

@@ -27,7 +27,7 @@ const STALL_CHAT_TEXT = "stall-chat-text";
 // CIFChatModule rows are 16 pixels; the input row sits under them.
 const STALL_CHAT_ROW = 16;
 import { ACTION_FORTRESS_RETURN } from "@/engine/foundation/gameplay/fortress-return";
-import { companionItemTargetCommand } from "@/engine/foundation/gameplay/cos-item-use";
+import { companionItemTargetCommand, isCompanionLeaseItem } from "@/engine/foundation/gameplay/cos-item-use";
 import {
 	createStoragePanel,
 	firstFreeSlot,
@@ -135,6 +135,11 @@ import { createAutoPotionInput } from "./hud/auto-potion-input";
 import { createCosHud } from "./hud/cos-hud";
 import { createExperimentalHud, EXPERIMENTAL_TABS } from "./hud/experimental-hud";
 import type { ExperimentalOptions } from "@/engine/foundation/ui/experimental-options";
+import {
+	rememberedWindows,
+	type RememberedWindow,
+	type WindowPositions
+} from "@/engine/foundation/ui/window-positions";
 import { createRepairHud } from "./hud/repair-hud";
 import { createSkinChangeHud } from "./hud/skin-change-hud";
 import { createJobHud } from "./hud/job-hud";
@@ -214,7 +219,7 @@ import {
 import { isSkinChangeScroll, skinDraftRange, type SkinDraftKey } from "@/engine/foundation/gameplay/skin-change";
 import { repairAllCost } from "@/engine/foundation/gameplay/repair";
 import { createSlotEffectClock } from "./hud/slot-effects";
-import { itemSlotOverlays, itemSlotWash, slotSeed } from "@/engine/foundation/ui/item-slot-effects";
+import { itemIsRare, itemSlotOverlays, itemSlotWash, slotSeed } from "@/engine/foundation/ui/item-slot-effects";
 import {
 	COS_CLASS_ATTACK,
 	COS_CLASS_GUILD,
@@ -255,6 +260,7 @@ import {
 	isMainPopupPage,
 	type MainPopupPage
 } from "@/engine/foundation/ui/main-popup";
+import { isUiPanel, type UiPanel } from "@/engine/foundation/ui/panels";
 import { moneyPresentation } from "@/engine/foundation/ui/money-presentation";
 import { groundItemName, groundItemNameVisible } from "@/engine/foundation/ui/ground-item-label";
 import {
@@ -348,6 +354,13 @@ import {
 	audioOptions,
 	type AudioOptions
 } from "@/engine/foundation/audio/options";
+import {
+	AUDIO_SLIDER_MAX,
+	audioSliderLevel,
+	audioSliderPosition,
+	stepAudioLevel,
+	audioLevelText
+} from "@/engine/foundation/audio/volume-control";
 import { chatScrollbar } from "@/engine/foundation/ui/chat-scrollbar";
 import { overheadLayout } from "@/engine/foundation/ui/overhead-layout";
 import { vitalWarning } from "@/engine/foundation/ui/vital-warning";
@@ -486,6 +499,8 @@ import type { EntityState } from "@/engine/contracts/world";
 const COS_LOW_SATIETY = [ 0x99 / 255, 0x99 / 255, 0x99 / 255, 1 ] as const;
 // No video option combo is open (slot -1 is the screen-size combo).
 const VIDEO_COMBO_CLOSED = -99;
+const WORLD_MAP_WIDTH = 652;
+const WORLD_MAP_HEIGHT = 424;
 const VIDEO_FRAME_LIMIT_SLOT = -3;
 const VIDEO_VISIBLE_ROWS = 6;
 const VIDEO_SCROLL_MAX = videoRows().length + 1 - VIDEO_VISIBLE_ROWS;
@@ -532,11 +547,14 @@ export interface UiFrameProbe {
 UiExtensions
 
 Browser-only integrations are grouped separately from native preferences.
+Sinks added after the positional list (window positions) live here too,
+rather than as another createUi parameter.
 ================
 */
 export interface UiExtensions {
 	bugReport?: BugReportControl | null;
 	saveExperimental?: ( value: ExperimentalOptions ) => void;
+	saveWindowPositions?: ( value: WindowPositions ) => void;
 }
 
 // Sole owner of UI navigation, focus projection and pending UI intent. Gameplay is read-only.
@@ -1004,6 +1022,61 @@ export function createUi(
 			position: extPosition
 		} );
 	}
+	/*
+	================
+	persistWindowPositions
+
+	Retire the placement session before UI teardown, including pagehide.
+	leave() makes a later disposal after logout a no-op.
+	================
+	*/
+	function persistWindowPositions( retire = true ) {
+		if ( !view ) return;
+		const root = hud.data()?.root;
+		if ( !retire ) {
+			// Native rejection saves before layout and before lazy children
+			// exist. Asset admission must precede that authored-origin snapshot.
+			if ( !root ) return;
+			const own: Partial<
+				Record<RememberedWindow, readonly [number, number]>
+			> = {};
+			for ( const window of rememberedWindows().slice( 0, 5 ) ) {
+				const node = Object.values( root ).find( node => node.id === window.nativeId );
+				if ( !node ) throw Error( "Missing eager window: " + window.key );
+				own[window.key] = [ node.rect[0], node.rect[1] ];
+			}
+			const remembered = windowPlacement.snapshot( view.width, view.height, own );
+			if ( remembered ) extensions.saveWindowPositions?.( remembered );
+			return;
+		}
+		const popup = mainPopupFrame( view.width, view.height, popupPosition );
+		const own: Partial<
+			Record<RememberedWindow, readonly [number, number]>
+		> = {
+			mainPopup: [ popup[0], popup[1] ],
+			worldMap: [ mapX, mapY ],
+			...(guideX !== null && guideY !== null ? { gameGuide: [ guideX, guideY ] as const } : {}),
+			...(extPosition ? { extendedQuickslot: extPosition } : {})
+		};
+		for (
+			const [key, name, id] of [
+				[ "store", "GDR_STORE", "Shop" ],
+				[ "storageRoom", "GDR_STORAGEROOM", "Storage" ],
+				[ "exchange", "GDR_EXCHANGE", "Exchange" ]
+			] as const
+		) {
+			const frame = windowPlacement.read( "window-drag:" + id ), node = root?.[name];
+			if ( frame && frame[2] > 0 ) own[key] = [ frame[0], frame[1] ];
+			else if ( node ) {
+				own[key] = [
+					Math.trunc( view.width / 2 ) - Math.trunc( node.rect[2] / 2 ),
+					Math.trunc( view.height / 2 ) - Math.trunc( node.rect[3] / 2 )
+				];
+			}
+		}
+		const remembered = windowPlacement.leave( view.width, view.height, own );
+		if ( remembered ) extensions.saveWindowPositions?.( remembered );
+	}
 	const expandedQuests = new Set<number>();
 	let selectedQuest = 0, trackedQuest = 0, confirmAbandon = false, questPage = 0, chatPage = 0;
 	let chatText = "", chatTarget = "", chatChannel = 1, chatFeedbackObserved = 0;
@@ -1012,7 +1085,7 @@ export function createUi(
 	let focusRequest: UiSemantics["focusRequest"];
 	let windowMissing: string[] = [];
 	const admittedWindows = new Map<string, HudSection & { key: string; }>();
-	let panel = "",
+	let panel: UiPanel | "" = "",
 		inventorySlot = -1,
 		inventoryPage = 0,
 		cosSlot = -1,
@@ -1157,10 +1230,21 @@ export function createUi(
 
 	/*
 	================
+	closeGuide
+	================
+	*/
+	function closeGuide() {
+		// 69CAB2 remembers the origin before 69CB0F destroys the guide section.
+		if ( panel !== "Game Guide" ) return;
+		if ( guideX !== null && guideY !== null ) windowPlacement.remember( "gameGuide", [ guideX, guideY ] );
+		guideX = guideY = null;
+	}
+	/*
+	================
 	setPanel
 	================
 	*/
-	function setPanel( next: string, intent: "open" | "toggle" | "select" | "warm" = "open" ) {
+	function setPanel( next: UiPanel | "", intent: "open" | "toggle" | "select" | "warm" = "open" ) {
 		// An unseen warm build (window-warm.ts) switches the drawn window only:
 		// no enter/leave hooks, sounds or transient resets.
 		if ( intent === "warm" ) {
@@ -1175,10 +1259,7 @@ export function createUi(
 		if ( next === "COS inventory" && !view?.gameplay?.cosRecords?.some( r => !r.dead && r.hp > 0 ) ) {
 			return false;
 		}
-		if ( next !== "Map" && mapTeleport.reverseSlot() !== null ) {
-			mapTeleport.closeReverse();
-			sendGameplay( { kind: "reverse-scroll-cancel" } );
-		}
+		closeGuide();
 		shopOpenRequest = null;
 		if ( next !== "Shop" ) repairHud.reset();
 		if ( next !== SKIN_PANEL ) skinHud.close();
@@ -1192,9 +1273,9 @@ export function createUi(
 		if ( shopDialog || shopWarning ) closeShopDialog();
 		guildDialog = "";
 		practice = null;
-		questDetails = false;
+		// 69CDF0 owns QuestInfo independently. 589660 hides main-popup pages,
+		// including Quests, without closing that details window or its prompt.
 		confirmDrop = "";
-		confirmAbandon = false;
 		confirmSocial = "";
 		unionHud.reset();
 		guildWarHud.reset();
@@ -1211,7 +1292,12 @@ export function createUi(
 		if ( panel === "Magic Pop" ) sendGameplay( { kind: "gacha-close" } );
 		if ( panel === GRANT_PANEL ) sendGameplay( { kind: "magic-option-close" } );
 		if ( panel && !next ) sound( "close" );
-		if ( !next ) admittedWindows.clear();
+		if ( !next ) {
+			for ( const owner of admittedWindows.keys() ) {
+				if ( questDetails && (owner === "quest-details" || owner === "quest-abandon") ) continue;
+				admittedWindows.delete( owner );
+			}
+		}
 		const wasOpen = !!panel;
 		panel = next;
 		if ( isMainPopupPage( next ) ) rememberedMainPopup = next;
@@ -1235,6 +1321,7 @@ export function createUi(
 			cosSlot = -1;
 			cosPage = 0;
 			cosPlayerPage = 0;
+			cosDraft = view?.gameplay?.cosRecords?.find( r => r.gid === cosGid )?.commandMode ?? 0;
 		}
 		if ( next === "Auto Potion" ) {
 			potionDraft = autoPotionDraft( view?.gameplay?.autoPotion ?? defaultAutoPotion() );
@@ -1262,6 +1349,19 @@ export function createUi(
 		if ( panel && (!wasOpen || intent !== "select") ) sound( "open" );
 		return true;
 	}
+	/*
+	================
+	panelNamed
+
+	A panel named by a control id. An unregistered name is a defect in the
+	control that carries it, so it is refused loudly instead of opening a
+	window no sweep has checked.
+	================
+	*/
+	function panelNamed( name: string ): UiPanel {
+		if ( !isUiPanel( name ) ) throw Error( "Unregistered UI panel: " + name );
+		return name;
+	}
 	// Session teardown clears presentation only; it must not send gameplay commands.
 	/*
 	================
@@ -1271,7 +1371,7 @@ export function createUi(
 	function executeAction( id: number ) {
 		const game = view?.gameplay;
 		if ( !game ) return;
-		const windows: Record<number, string> = { 1010: "Alchemy", 1012: "Auto Potion", 1014: "Academy Matching" };
+		const windows: Record<number, UiPanel> = { 1010: "Alchemy", 1012: "Auto Potion", 1014: "Academy Matching" };
 		if ( windows[id] ) {
 			setPanel( windows[id]! );
 			dirty = true;
@@ -1321,6 +1421,7 @@ export function createUi(
 	================
 	*/
 	function resetPanel() {
+		closeGuide();
 		withdrawal.close();
 		blockDialog = null;
 		blockSelected = "";
@@ -1330,6 +1431,7 @@ export function createUi(
 		admittedWindows.clear();
 		practice = null;
 		questDetails = false;
+		confirmAbandon = false;
 		skillTab = 0;
 		selectedMastery = 0;
 		skillScroll = 0;
@@ -1416,6 +1518,18 @@ export function createUi(
 		}
 		if ( command.kind === "item-use" ) {
 			const item = view?.gameplay?.inventory.find( row => row.slot === command.slot );
+			// 572858 dispatches hotbar items through the same cursor arming as
+			// an inventory activation. A confirmed use already has its target.
+			if ( item && isCompanionLeaseItem( item.typeFlags ) && command.summonerSlot === undefined ) {
+				if ( item.slot < 13 || view?.gameplay?.inventoryPending ) return;
+				carriedItem = null;
+				carriedShortcut = null;
+				inventorySlot = -1;
+				repairHud.disarm();
+				cosHud.armClock( item );
+				dirty = true;
+				return;
+			}
 			if ( item && isRestorationPotion( item ) ) {
 				withdrawal.open( item.refObjId );
 				dirty = true;
@@ -2190,10 +2304,10 @@ export function createUi(
 			}
 		} else if ( id.startsWith( "option-audio-step:" ) ) {
 			const [, key, delta] = id.split( ":" );
-			if ( key === "bgm" || key === "effects" || key === "environment" ) {
+			if ( (key === "bgm" || key === "effects" || key === "environment") && (delta === "-1" || delta === "1") ) {
 				updateAudioDraft( {
 					...audioDraft,
-					[key]: Math.max( 0, Math.min( 100, audioDraft[key] + Number( delta ) ) )
+					[key]: stepAudioLevel( audioDraft[key], Number( delta ) )
 				} );
 			}
 		} else if ( id === "option-default" ) {
@@ -3051,9 +3165,10 @@ export function createUi(
 			setPanel( "" );
 			inventorySlot = -1;
 		} else if ( id === "select-window:Character-stats" ) setPanel( "Character", "select" );
-		else if ( id.startsWith( "select-window:" ) ) setPanel( id.slice( 14 ), "select" );
-		else if ( id.startsWith( "open-window:" ) ) setPanel( id.slice( 12 ) );
-		else if ( id.startsWith( "toggle-window:" ) ) setPanel( id.slice( 14 ), "toggle" );
+		// Window ids carry the panel name as text; only registered panels open.
+		else if ( id.startsWith( "select-window:" ) ) setPanel( panelNamed( id.slice( 14 ) ), "select" );
+		else if ( id.startsWith( "open-window:" ) ) setPanel( panelNamed( id.slice( 12 ) ) );
+		else if ( id.startsWith( "toggle-window:" ) ) setPanel( panelNamed( id.slice( 14 ) ), "toggle" );
 		else if ( id === "cos-bag" ) setPanel( "COS inventory" );
 		else if ( id === "cos-cycle" ) {
 			const records = view.gameplay?.cosRecords?.filter( r => r.inventory && !r.dead && r.hp > 0 ) ?? [];
@@ -3307,8 +3422,13 @@ export function createUi(
 			shopPage = Math.max( 0, shopPage - 1 );
 			shopChoice = null;
 		} else if ( id.startsWith( "shop-tab:" ) ) {
-			shopTab = Number( id.slice( 9 ) );
-			shopPage = 0;
+			// 5B28F0: only a different tab resets the page; the open tab's
+			// button just refills the page already shown.
+			const tab = Number( id.slice( 9 ) );
+			if ( tab !== shopTab ) {
+				shopTab = tab;
+				shopPage = 0;
+			}
 			shopChoice = null;
 			shopDialog = false;
 		} else if ( id.startsWith( "shop-offer:" ) || id.startsWith( "shop-buyback:" ) ) {
@@ -3431,10 +3551,15 @@ export function createUi(
 			requestRebirthPrompt( view.gameplay.localGid );
 		} else if ( id === "clear-target" ) sendGameplay( { kind: "release-target" } );
 		else if ( id === "inventory-next" ) {
-			inventoryPage = Math.min(
-				Math.max( 0, Math.ceil( (view.gameplay?.inventorySlotCount ?? 0) / 32 ) - 1 ),
-				inventoryPage + 1
+			// 59DF10 pages the bag alone: the 13 sockets hold no page.
+			const bag = inventorySlots(
+				0,
+				0,
+				view.gameplay?.inventorySlotCount ?? 0,
+				view.gameplay?.equipmentSlotCount ?? 13,
+				0
 			);
+			inventoryPage = Math.min( bag.pages - 1, inventoryPage + 1 );
 		} else if ( id === "inventory-prev" ) inventoryPage = Math.max( 0, inventoryPage - 1 );
 		else if ( id.startsWith( "inventory-page:" ) ) inventoryPage = Number( id.slice( 15 ) );
 		else if ( id === "equipment-view" ) {
@@ -3870,6 +3995,47 @@ export function createUi(
 				}
 				if ( event.kind !== "hover" ) return;
 			}
+			if ( cosHud.renewal() !== null ) {
+				if (
+					event.kind === "key" && event.code === "Escape" ||
+					event.kind === "activate" && event.id === "cos-renew-cancel"
+				) {
+					cosHud.takeRenewal();
+					dirty = true;
+					return;
+				}
+				if (
+					event.kind === "key" && event.code === "Enter" && !composing ||
+					event.kind === "activate" && event.id === "cos-renew-confirm"
+				) {
+					const command = cosHud.takeRenewal();
+					if ( command && view?.session?.phase === "world" && !view.gameplay?.inventoryPending ) {
+						sendGameplay( command );
+					}
+					dirty = true;
+					return;
+				}
+				if ( event.kind !== "hover" ) return;
+			}
+			if ( cosHud.clockCursor() !== null ) {
+				if ( event.kind === "right-activate" || event.kind === "key" && event.code === "Escape" ) {
+					cosHud.takeRenewal();
+					dirty = true;
+					return;
+				}
+				if ( event.kind === "activate" && event.id.startsWith( "slot:" ) ) {
+					if ( controls.some( c => c.id === event.id && !c.disabled ) ) {
+						cosHud.chooseClockTarget(
+							view?.gameplay?.inventory.find( item => item.slot === Number( event.id.slice( 5 ) ) )
+						);
+						dirty = true;
+					}
+					return;
+				}
+				if (
+					event.kind === "drag" || event.kind === "drag-end" || event.kind === "double-activate"
+				) return;
+			}
 			if ( repairHud.armed() ) {
 				// 564046 checks the cursor mode before right-button item use.
 				if ( event.kind === "right-activate" || event.kind === "key" && event.code === "Escape" ) {
@@ -4261,6 +4427,10 @@ export function createUi(
 				dirty = true;
 				return;
 			}
+			if ( event.kind === "window-positions" ) {
+				windowPlacement.load( event.value );
+				return;
+			}
 			if ( event.kind === "quickslot-preferences" ) {
 				const row = extendedQuickslotOptions( event.value );
 				extOpen = row.open;
@@ -4269,7 +4439,6 @@ export function createUi(
 				extTransparent = row.transparent;
 				extSlotLock = row.slotLock;
 				extPositionLock = row.positionLock;
-				extPosition = row.position;
 				dirty = true;
 				return;
 			}
@@ -5135,6 +5304,10 @@ export function createUi(
 			}
 			if ( event.kind === "activate" ) {
 				// 570120 / 567290: CTRL shop transaction takes priority over SHIFT/ALT.
+				// A CTRL buy asks for one package when it holds several items, else
+				// for the item's MaxStack (ItemData +0x1A8, the first ItemData column),
+				// so equipment buys one. The quantity editor's purchaseLimit (6C0540)
+				// is not a CTRL input.
 				if (
 					event.ctrl && panel === "Shop" && view?.gameplay?.shop &&
 					(event.id.startsWith( "shop-offer:" ) ||
@@ -5155,7 +5328,7 @@ export function createUi(
 								sendGameplay(
 									merchantCommand(
 										choice,
-										(offer.contents?.length ?? 1) > 1 ? 1 : offer.purchaseLimit ?? offer.maxStack
+										(offer.contents?.length ?? 1) > 1 ? 1 : offer.maxStack
 									)
 								);
 							}
@@ -5165,7 +5338,9 @@ export function createUi(
 							row.slot === Number( event.id.slice( event.id.indexOf( ":" ) + 1 ) )
 						);
 						if ( item ) {
-							if ( (item.typeFlags & 0x1f) === 0xd || item.summon?.state === 2 ) {
+							// 567290: mall (ItemTid_IsMallItem) and rare (CSOItemData_IsRare)
+							// items refuse a quick sell.
+							if ( (item.typeFlags & 0x1f) === 0xd || itemIsRare( item ) || item.summon?.state === 2 ) {
 								message = hud.data()?.strings["UIIT_MSG_STRGERR_CANT_QUICKSELL_CASHITEM"] ?? "";
 								dirty = true;
 								return;
@@ -5355,8 +5530,8 @@ export function createUi(
 					const key = event.id.slice( 13 ), n = Number( event.value );
 					if (
 						(key === "bgm" || key === "effects" || key === "environment") && Number.isInteger( n ) &&
-						n >= 0 && n <= 100
-					) updateAudioDraft( { ...audioDraft, [key]: n } );
+						n >= 0 && n <= AUDIO_SLIDER_MAX
+					) updateAudioDraft( { ...audioDraft, [key]: audioSliderLevel( n ) } );
 				} else if ( event.id.startsWith( "potion-percent:" ) ) {
 					const key = event.id.slice( 15 ), percent = Number( event.value );
 					if (
@@ -5504,7 +5679,7 @@ export function createUi(
 						activate( "hotbar:" + hotbarSlot( hotbarPage, Number( event.code.slice( 5 ) ) || 10 ) );
 						return;
 					}
-					const names: Record<number, string> = {
+					const names: Record<number, UiPanel> = {
 						0: "Character",
 						1: "Inventory",
 						2: "Skills",
@@ -5550,7 +5725,7 @@ export function createUi(
 		================
 		*/
 		cursor(): import("@/engine/foundation/ui/world-cursor").WorldCursor | null {
-			return repairHud.cursor();
+			return cosHud.clockCursor() ?? repairHud.cursor();
 		},
 		/*
 		================
@@ -5559,6 +5734,12 @@ export function createUi(
 		*/
 		step( next: UiView, now = 0, probe?: UiFrameProbe ): UiSemantics | null {
 			quickslotTime = next.simulationTimeMs ?? now;
+			if (
+				cosHud.reconcileClock(
+					next.gameplay?.inventory ?? [],
+					next.session?.phase === "world" && !next.travel
+				)
+			) dirty = true;
 			if (
 				(repairHud.armed() || repairHud.confirmCost() !== null) &&
 				(next.session?.phase !== "world" || next.travel || !next.gameplay?.shop ||
@@ -5883,6 +6064,10 @@ export function createUi(
 				view?.berserkGauge?.displayed === next.berserkGauge?.displayed && view?.gameplay === next.gameplay &&
 				view?.entities === next.entities && view?.width === next.width && view?.height === next.height
 			) return null;
+			const resizedWorld = !!view && (view.width !== next.width || view.height !== next.height) &&
+				(view.session?.phase === "world" ||
+					((view.session?.phase === "disconnected" || view.session?.phase === "reconnecting") &&
+						!!view.gameplay?.localGid));
 			nextPoll = now + 100;
 			view = next;
 			probe?.detailBegin( "ui-assembly" );
@@ -6072,7 +6257,24 @@ export function createUi(
 					rosterRequested = false;
 					roster = [];
 				}
+				if ( phase === "world" ) {
+					// 6A06B0: the interface opens its windows where the last session
+					// left them at this screen size.
+					const remembered = windowPlacement.enter( next.width, next.height );
+					if ( remembered ) {
+						popupPosition = remembered.mainPopup ?? null;
+						[mapX, mapY] = remembered.worldMap ??
+							[
+								Math.trunc( next.width / 2 ) - WORLD_MAP_WIDTH / 2,
+								Math.trunc( next.height / 2 ) - WORLD_MAP_HEIGHT / 2
+							];
+						guideX = guideY = null;
+						extPosition = null;
+					}
+				}
 				if ( phase !== "world" && !retainedWorld ) {
+					// 6A01B0: logout writes them back before the session's windows go.
+					persistWindowPositions();
 					guildWarHud.reset( true );
 					windowPlacement.reset();
 					itemMall.reset();
@@ -6148,6 +6350,23 @@ export function createUi(
 					cosGid = 0;
 				}
 			}
+			if ( resizedWorld && (phase === "world" || retainedWorld) ) {
+				// GraphicApply relays layout to live children; a closed guide is absent.
+				if ( panel === "Game Guide" && guideX !== null && guideY !== null ) {
+					guideX = Math.trunc( next.width / 2 ) - 210;
+					guideY = Math.trunc( next.height / 2 ) - 226;
+				}
+				const extended = hud.data()?.extended[Number( extVertical ) * 2 + Number( extDouble )];
+				if ( extPosition && extended ) {
+					// 548490 sizes the widget root from header ID10, not the protruding slots.
+					const header = Object.values( extended ).find( node => node.id === 10 )!;
+					extPosition = [
+						Math.min( extPosition[0], next.width - header.rect[2] ),
+						Math.min( extPosition[1], next.height - header.rect[3] )
+					];
+				}
+			}
+			if ( phase === "world" && windowPlacement.needsInitialSave() ) persistWindowPositions( false );
 			if ( next.session?.servers ) {
 				servers = next.session.servers;
 				if ( !servers.some( s => s.id === selectedServer && s.operating ) ) {
@@ -6220,8 +6439,14 @@ export function createUi(
 			windowOrigin
 			================
 			*/
-			function windowOrigin( name: string, initial: UiRect, id = "window-drag:" + name, drag?: UiRect ) {
-				const r = windowPlacement.frame( id, initial, w, h );
+			function windowOrigin(
+				name: string,
+				initial: UiRect,
+				id = "window-drag:" + name,
+				options: { drag?: UiRect; nativeExtent?: readonly [number, number]; } = {}
+			) {
+				const r = windowPlacement.frame( id, initial, [ w, h ], options.nativeExtent );
+				const drag = options.drag;
 				controls.push( {
 					id,
 					label: name,
@@ -6924,8 +7149,9 @@ export function createUi(
 					disabled,
 					selected,
 					rightActivate: !!item && (id.startsWith( "slot:" ) || id.startsWith( "storage-slot:" )),
-					draggable: !!item && !repairHud.armed(),
-					carry: !repairHud.armed() && !!item && ITEM_SLOT_PREFIXES.some( prefix => id.startsWith( prefix ) )
+					draggable: !!item && !repairHud.armed() && cosHud.clockCursor() === null,
+					carry: !repairHud.armed() && cosHud.clockCursor() === null && !!item &&
+						ITEM_SLOT_PREFIXES.some( prefix => id.startsWith( prefix ) )
 				} );
 				itemCount( item, r );
 			}
@@ -7974,6 +8200,8 @@ export function createUi(
 					// The local character, selected from its portrait, wears the
 					// player layout (5814D0 handles the local CICUser too).
 					const shown = target.kind === "local-player" ? { ...target, kind: "player" as const } : target;
+					// CIFTargetNPC_SetTargetAndLayout (5823B0) shows the 168x4 gauge for
+					// every non-combat COS, grab pets included.
 					const hp = game?.vitals.find( v => v.gid === target.gid )?.hp ?? record?.hp,
 						output = targetStatus(
 							hudData.targets,
@@ -8267,15 +8495,18 @@ export function createUi(
 					}
 				}
 				if ( hudData ) {
-					const layout = hudData.extended[Number( extVertical ) * 2 + Number( extDouble )]!,
-						width = extVertical ? (extDouble ? 80 : 44) : (extDouble ? 213 : 405),
-						height = extVertical ? (extDouble ? 212 : 405) : (extDouble ? 76 : 40);
-					const headerWidth = Object.values( layout ).find( n => n.id === 10 )!.rect[2];
-					if ( !extPosition ) extPosition = [ Math.max( 0, w - headerWidth - 26 ), 181 ];
-					const ex = Math.max( 0, Math.min( w - width, extPosition[0] ) ),
-						ey = Math.max( 0, Math.min( h - height, extPosition[1] ) ),
-						alpha = extTransparent ? 110 / 255 : 1;
+					const layout = hudData.extended[Number( extVertical ) * 2 + Number( extDouble )]!;
 					const header = Object.values( layout ).find( n => n.id === 10 )!;
+					if ( !extPosition ) {
+						extPosition = windowPlacement.takeRemembered( "extendedQuickslot", w, h, [
+							header.rect[2],
+							header.rect[3]
+						] ) ??
+							[ w - header.rect[2] - 26, 181 ];
+					}
+					const ex = extPosition[0],
+						ey = extPosition[1],
+						alpha = extTransparent ? 110 / 255 : 1;
 					controls.push( {
 						id: "ext-drag",
 						label: "Move extended quickslot bar",
@@ -8380,9 +8611,11 @@ export function createUi(
 					mapPan = [ 0, 0 ];
 					mapCenter = null;
 				}
-				const mapWidth = mapSmall ? 268 : 652, mapHeight = mapSmall ? 296 : 424;
+				const mapWidth = mapSmall ? 268 : WORLD_MAP_WIDTH, mapHeight = mapSmall ? 296 : WORLD_MAP_HEIGHT;
 				const mapLeft = Math.min( mapX, Math.max( 0, w - mapWidth ) ),
 					mapTop = Math.min( mapY, Math.max( 0, h - mapHeight ) );
+				mapX = mapLeft;
+				mapY = mapTop;
 				const mapHits: UiControl[] = [];
 				// 57FE60's marker passes, in its order: quest NPCs (57B1C0), hunting points
 				// (57B550), then the apprenticeship and party rosters (57CE80). Each is a
@@ -9048,12 +9281,12 @@ export function createUi(
 					const layout = hudData.windows.ifoption!, slot = hudData.windows.ifgameoptionslot!;
 					windowBox( "Experimental", px, py, width, height );
 					closeButton( px + width - 26, py + 10 );
-					const tabWidth = 62, tabStart = (width - (EXPERIMENTAL_TABS.length * tabWidth - 2)) / 2;
+					const tabWidth = 78, tabStart = (width - (EXPERIMENTAL_TABS.length * tabWidth - 2)) / 2;
 					for ( let i = 0; i < EXPERIMENTAL_TABS.length; i++ ) {
 						nativeTab(
 							"experimental-tab:" + i,
 							EXPERIMENTAL_TABS[i]!.title,
-							[ px + tabStart + i * tabWidth, py + 40, 60, 24 ],
+							[ px + tabStart + i * tabWidth, py + 40, tabWidth - 2, 24 ],
 							tab === i,
 							{ family: "com_tab", client: [ 0, 9, 0, 6 ] }
 						);
@@ -9067,7 +9300,7 @@ export function createUi(
 					// Browser-only section reuses the native Set Game header and inset frame.
 					const section = hudData.windows.ifoption_game!.GDR_GAME_OPTION_TAB_1!;
 					authoredImage( { ...section, rect: [ 25, 70, 196, 28 ] }, px, py );
-					authoredText( { ...section, rect: [ 25, 70, 196, 28 ] }, px, py, page.title );
+					authoredText( { ...section, rect: [ 25, 70, 196, 28 ] }, px, py, page.section );
 					authoredChrome(
 						{
 							...hudData.windows.ifoption_game!.GDR_GAME_OPTION_SCROLLMANAGER_1!,
@@ -9249,7 +9482,7 @@ export function createUi(
 							} );
 						}
 						// Screen size: the game area is the chosen mode, centred on the page
-						// at one UI pixel per CSS pixel (platform displayScale). Hardware
+						// in physical pixels (platform displayScale). Hardware
 						// gamma is not a browser display mode.
 						combos.push( {
 							slot: -1,
@@ -9460,6 +9693,8 @@ export function createUi(
 								c = authoredRect( check, ox, oy ),
 								path = ROOT + "interface/ifcommon/com_radiobutton_" +
 									(audioDraft[mute] ? "on" : "off") + ".png";
+							const position = audioSliderPosition( audioDraft[key] ), max = AUDIO_SLIDER_MAX;
+							const valueText = audioLevelText( audioDraft[key], audioDraft[mute] );
 							paths.push( path );
 							if ( resources.has( path ) ) rect( c, white, path );
 							authoredText( muteLabel, ox, oy, hudCopy( muteLabel.text ) );
@@ -9476,14 +9711,16 @@ export function createUi(
 								kind: "range",
 								rect: [ r[0], r[1], 202, 16 ],
 								min: 0,
-								max: 100,
-								value: String( audioDraft[key] )
+								max,
+								value: String( position ),
+								valueText,
+								helpText: valueText
 							} );
 							const thumb = ROOT + "interface/ifcommon/com_scroll_button.png";
 							paths.push( thumb );
 							if ( resources.has( thumb ) ) {
 								rect(
-									[ r[0] + Math.trunc( audioDraft[key] * 186 / 100 ), r[1], 16, 16 ],
+									[ r[0] + Math.trunc( position * 186 / max ), r[1], 16, 16 ],
 									white,
 									thumb
 								);
@@ -9502,7 +9739,7 @@ export function createUi(
 											" +"),
 									kind: "button",
 									rect: a,
-									disabled: delta < 0 ? audioDraft[key] === 0 : audioDraft[key] === 100
+									disabled: delta < 0 ? position === 0 : position === max
 								} );
 							}
 						}
@@ -10152,8 +10389,8 @@ export function createUi(
 							disabled: !enabled,
 							selected: inventorySlot === slot,
 							rightActivate: !!item || repairHud.armed(),
-							draggable: !!item && !repairHud.armed(),
-							carry: !repairHud.armed() && !!item
+							draggable: !!item && !repairHud.armed() && cosHud.clockCursor() === null,
+							carry: !repairHud.armed() && cosHud.clockCursor() === null && !!item
 						} );
 						if ( enabled && item ) {
 							for (
@@ -10252,8 +10489,8 @@ export function createUi(
 								// 699359 drops moves while one is pending; avatar slots stay enabled.
 								disabled: false,
 								rightActivate: !!item || repairHud.armed(),
-								draggable: !!item && !repairHud.armed(),
-								carry: !repairHud.armed() && !!item
+								draggable: !!item && !repairHud.armed() && cosHud.clockCursor() === null,
+								carry: !repairHud.armed() && cosHud.clockCursor() === null && !!item
 							} );
 						}
 					}
@@ -10772,6 +11009,75 @@ export function createUi(
 					controls.push( ...scroll.controls );
 					endWindow( admission );
 				}
+				if ( questDetails && hudData ) {
+					const q = game?.quests?.find( q => q.refId === selectedQuest ),
+						page = hudData.windows.ifquestreward!,
+						px = questPosition[0],
+						py = questPosition[1],
+						admission = beginWindow();
+					blocks.push( [ px, py, 376, 384 ] );
+					controls.push( {
+						id: "quest-detail-drag",
+						label: "Move quest details",
+						kind: "button",
+						draggable: true,
+						rect: [ px, py, 376, 384 ]
+					} );
+					for ( const node of authoredPaintOrder( page ) ) {
+						if ( node.type !== "CIFButton" && node.type !== "CIFCloseButton" ) {
+							authoredChrome( node, px, py );
+						}
+					}
+					const meta = guideResources.data()?.questPresentation.records[selectedQuest];
+					authoredText( page.GDR_QUESTREWARD_TITLE!, px, py, meta?.rewardTitle ?? "" );
+					if ( q ) {
+						const r = authoredRect( page.GDR_QUESTREWARD_CONTENTS!, px, py );
+						const result = text.guide(
+							guideTokens( meta?.rewardBody ?? "" ),
+							[ r[0], r[1] - questDetailScroll, r[2], r[3] ],
+							r,
+							gold,
+							resources.size
+						);
+						questDetailMax = Math.max( 0, result.height - r[3] );
+						questDetailScroll = Math.min( questDetailScroll, questDetailMax );
+						quads.push( ...result.quads );
+						paths.push( ...result.paths );
+					}
+					const give = page.GDR_QUESTREWARD_GIVEUP!,
+						caption = hudCopy( q?.u10 === 2 ? "UIIT_STT_QUEST_REWARD" : "UIIT_STT_QUEST_GIVEUP" );
+					authoredLabeledButton( give, px, py, q?.u10 === 2 ? "quest-reward" : "quest-abandon", caption );
+					const close = page.GDR_QUESTREWARD_CLOSE!;
+					closeButton( px + close.rect[0], py + close.rect[1], "quest-details-close" );
+					const track = authoredRect( page.GDR_QUESTREWARD_SCROLL!, px, py );
+					for (
+						const [id, skin, yy] of [ [ "quest-detail-up", "up", track[1] - 16 ], [
+							"quest-detail-down",
+							"down",
+							track[1] + 222
+						], [
+							"quest-detail-thumb",
+							"button",
+							track[1] + Math.trunc( questDetailMax ? questDetailScroll * 206 / questDetailMax : 0 )
+						] ] as const
+					) {
+						const path = ROOT + "interface/guide/gd_scroll_" + skin + ".png",
+							r: UiRect = [ track[0], yy, 16, 16 ];
+						image( r, path );
+						controls.push( {
+							id,
+							label: id === "quest-detail-thumb" ?
+								"Scroll quest details" :
+								skin === "up" ?
+								"Scroll up" :
+								"Scroll down",
+							rect: r,
+							kind: "button",
+							draggable: skin === "button"
+						} );
+					}
+					endWindow( admission, "quest-details" );
+				}
 				if ( practice && panel === "Skills" && hudData ) {
 					const mastery = practice.mode === PRACTICE_MASTERY,
 						row = mastery ? undefined : training.skill( practice.id ),
@@ -10907,76 +11213,7 @@ export function createUi(
 					) authoredLabeledButton( node, px, py, id, hudCopy( node.text ) );
 					endWindow( admission, "skill-confirm" );
 				}
-				if ( questDetails && panel === "Quests" && hudData ) {
-					const q = game?.quests?.find( q => q.refId === selectedQuest ),
-						page = hudData.windows.ifquestreward!,
-						px = questPosition[0],
-						py = questPosition[1],
-						admission = beginWindow();
-					blocks.push( [ px, py, 376, 384 ] );
-					controls.push( {
-						id: "quest-detail-drag",
-						label: "Move quest details",
-						kind: "button",
-						draggable: true,
-						rect: [ px, py, 376, 384 ]
-					} );
-					for ( const node of authoredPaintOrder( page ) ) {
-						if ( node.type !== "CIFButton" && node.type !== "CIFCloseButton" ) {
-							authoredChrome( node, px, py );
-						}
-					}
-					const meta = guideResources.data()?.questPresentation.records[selectedQuest];
-					authoredText( page.GDR_QUESTREWARD_TITLE!, px, py, meta?.rewardTitle ?? "" );
-					if ( q ) {
-						const r = authoredRect( page.GDR_QUESTREWARD_CONTENTS!, px, py );
-						const result = text.guide(
-							guideTokens( meta?.rewardBody ?? "" ),
-							[ r[0], r[1] - questDetailScroll, r[2], r[3] ],
-							r,
-							gold,
-							resources.size
-						);
-						questDetailMax = Math.max( 0, result.height - r[3] );
-						questDetailScroll = Math.min( questDetailScroll, questDetailMax );
-						quads.push( ...result.quads );
-						paths.push( ...result.paths );
-					}
-					const give = page.GDR_QUESTREWARD_GIVEUP!,
-						caption = hudCopy( q?.u10 === 2 ? "UIIT_STT_QUEST_REWARD" : "UIIT_STT_QUEST_GIVEUP" );
-					authoredLabeledButton( give, px, py, q?.u10 === 2 ? "quest-reward" : "quest-abandon", caption );
-					const close = page.GDR_QUESTREWARD_CLOSE!;
-					closeButton( px + close.rect[0], py + close.rect[1], "quest-details-close" );
-					const track = authoredRect( page.GDR_QUESTREWARD_SCROLL!, px, py );
-					for (
-						const [id, skin, yy] of [ [ "quest-detail-up", "up", track[1] - 16 ], [
-							"quest-detail-down",
-							"down",
-							track[1] + 222
-						], [
-							"quest-detail-thumb",
-							"button",
-							track[1] + Math.trunc( questDetailMax ? questDetailScroll * 206 / questDetailMax : 0 )
-						] ] as const
-					) {
-						const path = ROOT + "interface/guide/gd_scroll_" + skin + ".png",
-							r: UiRect = [ track[0], yy, 16, 16 ];
-						image( r, path );
-						controls.push( {
-							id,
-							label: id === "quest-detail-thumb" ?
-								"Scroll quest details" :
-								skin === "up" ?
-								"Scroll up" :
-								"Scroll down",
-							rect: r,
-							kind: "button",
-							draggable: skin === "button"
-						} );
-					}
-					endWindow( admission, "quest-details" );
-				}
-				if ( confirmAbandon && questDetails && panel === "Quests" ) {
+				if ( confirmAbandon && questDetails ) {
 					controls = [];
 					const admission = beginWindow(),
 						box = guildProposalLayout( w, h ),
@@ -11712,11 +11949,16 @@ export function createUi(
 				if ( panel === "Alchemy" && hudData ) {
 					const admission = beginWindow(),
 						frame = hudData.windows.ifnewalchemybox!,
+						root = Object.values( hudData.root ).find( node => node.id === 0x2c )!,
 						[px, py] = windowOrigin(
 							"Alchemy",
 							[ Math.max( 0, w - 388 - 392 ), Math.max( 0, h - 478 ), 376, 378 ],
 							"window-drag:Alchemy",
-							frame.GDR_ALCHEMYBOX_DRAG!.rect
+							{
+								drag: frame.GDR_ALCHEMYBOX_DRAG!.rect,
+								// 61FFD3 leaves the root at its authored extent; the tall pane is a child.
+								nativeExtent: [ root.rect[2], root.rect[3] ]
+							}
 						),
 						processing = [ "compound", "advanced", "dissolve" ].includes( alchemyMode ),
 						page = hudData.windows[processing ? "ifalchemyprocess" : "ifnewalchemyreinforce"]!,
@@ -13979,8 +14221,12 @@ export function createUi(
 						game?.completedQuests ?? []
 					) :
 					[];
-				const gx = Math.max( 0, Math.min( guideX ?? Math.floor( (w - 420) / 2 ), w - 420 ) ),
-					gy = Math.max( 0, Math.min( guideY ?? Math.floor( (h - 452) / 2 ), h - 452 ) ),
+				if ( guideX === null || guideY === null ) {
+					[guideX, guideY] = windowPlacement.takeRemembered( "gameGuide", w, h, [ 420, 452 ] ) ??
+						[ Math.trunc( w / 2 ) - 210, Math.trunc( h / 2 ) - 226 ];
+				}
+				const gx = guideX,
+					gy = guideY,
 					nodes = guideData.layout;
 				controls.push( {
 					id: "guide-drag",
@@ -15539,7 +15785,7 @@ export function createUi(
 					...layout.refuse.slice( 0, 3 ) as [number, number, number]
 				);
 			}
-			if ( worldVisible && cosHud.cleanConfirm() !== null ) {
+			if ( worldVisible && (cosHud.cleanConfirm() !== null || cosHud.renewal() !== null) ) {
 				// 6A2350 case 5 raises the type 0xD box with the two
 				// UIIT_MSG_COS_CLEAN_CONFIRM lines before a transport is destroyed.
 				const layout = guildProposalLayout( w, h );
@@ -15558,22 +15804,43 @@ export function createUi(
 						hAlign: 1,
 						vAlign: 0
 					} ),
-					...text.quads( hudCopy( "UIIT_MSG_COS_CLEAN_CONFIRM1" ), layout.name, full, white, {
-						hAlign: 1,
-						vAlign: 0
-					} ),
-					...text.quads( hudCopy( "UIIT_MSG_COS_CLEAN_CONFIRM2" ), layout.question, full, white, {
-						hAlign: 1,
-						vAlign: 0
-					} )
+					...text.quads(
+						// CIFMessageBox type 0x1F (52F460) asks with the two CANCLE lines.
+						hudCopy(
+							cosHud.renewal() ?
+								"UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_1" :
+								"UIIT_MSG_COS_CLEAN_CONFIRM1"
+						),
+						layout.name,
+						full,
+						white,
+						{
+							hAlign: 1,
+							vAlign: 0
+						}
+					),
+					...text.quads(
+						hudCopy(
+							cosHud.renewal() ?
+								"UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_2" :
+								"UIIT_MSG_COS_CLEAN_CONFIRM2"
+						),
+						layout.question,
+						full,
+						white,
+						{
+							hAlign: 1,
+							vAlign: 0
+						}
+					)
 				);
 				button(
-					"cos-clean-confirm",
+					cosHud.renewal() ? "cos-renew-confirm" : "cos-clean-confirm",
 					hudCopy( "UIIT_CTL_YES" ),
 					...layout.accept.slice( 0, 3 ) as [number, number, number]
 				);
 				button(
-					"cos-clean-cancel",
+					cosHud.renewal() ? "cos-renew-cancel" : "cos-clean-cancel",
 					hudCopy( "UIIT_CTL_NO" ),
 					...layout.refuse.slice( 0, 3 ) as [number, number, number]
 				);
@@ -17423,6 +17690,7 @@ export function createUi(
 		================
 		*/
 		dispose() {
+			if ( !disposed ) persistWindowPositions();
 			itemMall.reset();
 			skillTraining.reset();
 			gauges.reset();

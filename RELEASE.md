@@ -14,18 +14,28 @@ Before tagging a release:
    keep the bytes and URLs players have cached (assetPackLayout.mjs):
    `curl -o live-manifest.json https://opensro.online/assets/packs/manifest.json`,
    then `SRO_ASSET_PACK_BASELINE=live-manifest.json pnpm assets build`.
+   Then `pnpm assets ledger` must report no unclaimed assets and no missing
+   owner (run `pnpm assets build full` if it does); the beta packager
+   refuses otherwise. [docs/ASSET_DELIVERY.md](docs/ASSET_DELIVERY.md)
+   explains the ledger.
 4. `git status --ignored` must list `.generated/`, `temp/` and `.state/` as
    ignored, and nothing generated as tracked.
-5. `pnpm assets compact` and `pnpm assets check compact`. Publish the compact
-   browser pack set from `.generated/client-public/assets/` and
-   `apps/server/.generated/game-data/1.150/server.srogz`, not loose duplicates. The compact
-   check enforces a combined client-plus-server ceiling of 80% of the original
-   PK2 payload and verifies the archive is lossless and manifest-consistent.
-6. With the loose server projection absent, `pnpm check server` proves
+5. `pnpm --filter @sro/client-next build:beta` packages the browser release;
+   keep its `private/` source maps outside the deployable package. A data
+   release is staged from this package (`data_release.py`, see
+   [docs/ASSET_DELIVERY.md](docs/ASSET_DELIVERY.md)) before step 6.
+6. Only after packaging and staging: `pnpm assets compact` and
+   `pnpm assets check compact`. Compact replaces the loose public files, the
+   outdoor world and the loose server projection with their release copies,
+   and the client check inside `build:beta` reads all three, so compacting
+   first fails the packager. `pnpm assets build full` followed by
+   `pnpm task build server-game-data` restores a compacted tree; a plain
+   `pnpm assets build` does not restore the outdoor world. The compact check
+   enforces a combined client-plus-server ceiling of 80% of the original PK2
+   payload and verifies the archive is lossless and manifest-consistent.
+7. With the loose server projection absent, `pnpm check server` proves
    archive-only materialization. Then `pnpm release` removes ignored build and
    profiling output.
-7. `pnpm --filter @sro/client-next build:beta` packages the browser release;
-   keep its `private/` source maps outside the deployable package.
 8. No file selected by `git ls-files` may be 50 MiB or larger.
 9. Review licensing and trademark language for the release.
 

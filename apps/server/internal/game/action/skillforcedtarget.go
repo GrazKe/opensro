@@ -126,7 +126,7 @@ func (rt *Runtime) acceptForcedTarget(c tauntPlayerCast) OpResult {
 	frames := []wire.Frame{open}
 	var private []RecipientFrames
 	for _, recipient := range recipients {
-		if !rt.auraReplacementAllowed(c.division, recipient, c.skill) {
+		if !rt.auraReplacementAllowed(c.division, recipient, c.skill, c.caster.ID == recipient.ID) {
 			continue
 		}
 		var installed []wire.Frame
@@ -140,6 +140,7 @@ func (rt *Runtime) acceptForcedTarget(c tauntPlayerCast) OpResult {
 				statuseffect.StateActive, false, EffectPresentation{Phase: 2, ForcedTargetGID: casterGID}, c.now)
 			if ok {
 				installed = append(installed, rt.enterBattleState(c.division, recipient, c.now)...)
+				rt.endJobActivation(c.division, recipient)
 				installed = append(installed, rt.registerPlayerAttacked(c.division, recipient, c.caster, c.now)...)
 				owner.applyHit(abnormal.HitContext{Attack: true}, nil)
 			}
