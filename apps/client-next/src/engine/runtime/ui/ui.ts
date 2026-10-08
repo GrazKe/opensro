@@ -1500,6 +1500,18 @@ export function createUi(
 		}
 		if ( command.kind === "item-use" ) {
 			const item = view?.gameplay?.inventory.find( row => row.slot === command.slot );
+			// 572858 dispatches hotbar items through the same cursor arming as
+			// an inventory activation. A confirmed use already has its target.
+			if ( item && isCompanionLeaseItem( item.typeFlags ) && command.summonerSlot === undefined ) {
+				if ( item.slot < 13 || view?.gameplay?.inventoryPending ) return;
+				carriedItem = null;
+				carriedShortcut = null;
+				inventorySlot = -1;
+				repairHud.disarm();
+				cosHud.armClock( item );
+				dirty = true;
+				return;
+			}
 			if ( item && isRestorationPotion( item ) ) {
 				withdrawal.open( item.refObjId );
 				dirty = true;
@@ -1556,15 +1568,6 @@ export function createUi(
 	function useInventorySlot( slot: number ): boolean {
 		const game = view?.gameplay;
 		if ( !game ) return false;
-		const item = game.inventory.find( row => row.slot === slot );
-		if ( item && slot >= 13 && !game.inventoryPending && isCompanionLeaseItem( item.typeFlags ) ) {
-			carriedItem = null;
-			carriedShortcut = null;
-			inventorySlot = -1;
-			repairHud.disarm();
-			cosHud.armClock( item );
-			return true;
-		}
 		const command = itemActivation( slot, game.inventory, game.inventorySlotCount, game.inventoryPending );
 		if ( !command ) return false;
 		sendGameplay( command );
@@ -5661,7 +5664,7 @@ export function createUi(
 			if (
 				cosHud.reconcileClock(
 					next.gameplay?.inventory ?? [],
-					next.session?.phase === "world" && !next.travel && panel === "Inventory"
+					next.session?.phase === "world" && !next.travel
 				)
 			) dirty = true;
 			if (

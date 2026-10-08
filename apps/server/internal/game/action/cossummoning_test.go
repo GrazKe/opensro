@@ -198,20 +198,30 @@ TestCompanionLeaseRenewalPreservesRecordAndRemainingTime
 */
 func TestCompanionLeaseRenewalPreservesRecordAndRemainingTime(t *testing.T) {
 	for _, minutes := range []int64{1440, 40320} {
-		for _, expired := range []bool{false, true} {
-			t.Run(map[bool]string{false: "unexpired", true: "expired"}[expired], func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			expired bool
+			hp, mp  uint32
+		}{
+			{"unexpired", false, 43, 17},
+			{"expired", true, 43, 17},
+			{"expired-zero-hp", true, 0, 17},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
 				c, refs := persistentSummonFixture()
+				refs.characters["PICKUP"].MaxMP = 80
 				rt, _ := newTestRuntime(c, refs)
 				useSummonerFixture(t, rt, c, 23, refs.staticItemSource["SUMMON_ATTACK"])
 				useSummonerFixture(t, rt, c, 24, refs.staticItemSource["SUMMON_PICKUP"])
 				pet := c.Companions()[1]
 				pet.Name = "Retained"
+				pet.CurrentHP, pet.CurrentMP = tc.hp, tc.mp
+				gid, generation := pet.GID, pet.SummonGeneration
 				pet.Container.Rows = []domain.InventoryRow{{Slot: 0, RefObjID: 3630, Codename: "ITEM_ETC_HP_POTION_01", TypeFlags: wire.PackTypeFlags(3, 3, 1, 1), StackCount: 2}}
 				base := pet.RentalExpiresAtUnix
-				if expired {
+				if tc.expired {
 					pet.Summoned = false
 					pet.StateFlags = 0
-					pet.CurrentHP = 0
 					pet.RentalExpiresAtUnix = rt.Now().Unix() - 60
 					base = rt.Now().Unix()
 				}
@@ -221,8 +231,19 @@ func TestCompanionLeaseRenewalPreservesRecordAndRemainingTime(t *testing.T) {
 				c.MissionInventory = append(c.MissionInventory, enterworld.InventoryRow{Slot: 25, RefObjID: ref.RefObjID, Codename: ref.Codename, TypeFlags: ref.TypeFlags(), StackCount: 2})
 				request := wire.NewWriter(4).U8(25).U16(ref.TypeFlags()).U8(24).Payload()
 				result := rt.HandleItemUse(testDivision, c, request)
-				if result.Frames[0].Payload[0] != 1 || pet.RentalExpiresAtUnix != base+minutes*60 || pet.Name != "Retained" || len(pet.Container.Rows) != 1 || pet.Summoned == expired || pet.StateFlags&1 == 0 || pet.CurrentHP == 0 {
+				if len(result.Frames) == 0 || len(result.Frames[0].Payload) == 0 || result.Frames[0].Payload[0] != 1 || pet.RentalExpiresAtUnix != base+minutes*60 || pet.Name != "Retained" || len(pet.Container.Rows) != 1 || pet.Summoned == tc.expired || pet.StateFlags&1 == 0 {
 					t.Fatalf("incorrect renewal: %+v %+v", pet, result)
+				}
+				if pet.CurrentHP != tc.hp || pet.CurrentMP != tc.mp || pet.GID != gid || pet.SummonGeneration != generation {
+					t.Fatalf("renewal changed retained vitals or actor identity: HP/MP %d/%d, want %d/%d; GID/generation %d/%d, want %d/%d",
+						pet.CurrentHP, pet.CurrentMP, tc.hp, tc.mp, pet.GID, pet.SummonGeneration, gid, generation)
+				}
+				for _, frames := range [][]wire.Frame{result.Frames, result.Broadcast} {
+					for _, frame := range frames {
+						if frame.Opcode == simulation.OpVitalsUpdate {
+							t.Fatal("clock renewal published a vitals change", frame)
+						}
+					}
 				}
 				// Frames[1] is the item's visual (publishItemUseVisual).
 				if len(result.Frames) < 3 || result.Frames[2].Opcode != 0x3645 || len(result.Frames[2].Payload) != 7 || binary.LittleEndian.Uint32(result.Frames[2].Payload[3:]) != uint32(pet.RentalRemainingSeconds) {
@@ -230,7 +251,7 @@ func TestCompanionLeaseRenewalPreservesRecordAndRemainingTime(t *testing.T) {
 				}
 				assertItemUseRefusedUnchanged(t, rt, c, wire.NewWriter(4).U8(25).U16(ref.TypeFlags()).U8(23).Payload(), companionLeaseWrongTarget)
 				assertItemUseRefusedUnchanged(t, rt, c, append(request, 0), companionLeaseWrongTarget)
-				if expired {
+				if tc.expired && tc.hp > 0 {
 					useSummonerFixture(t, rt, c, 24, refs.staticItemSource["SUMMON_PICKUP"])
 				}
 			})

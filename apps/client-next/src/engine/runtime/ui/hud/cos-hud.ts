@@ -51,8 +51,8 @@ export function createCosHud() {
 		chooseClockTarget
 
 		567372 checks cursor A6: any occupied inventory or equipment slot opens
-		the type-1F confirmation (5673A7) and clears the cursor. The client does
-		not judge the target; the server refuses one that is not a grab pet.
+		the type-1F confirmation (5673A7) and clears the cursor. On confirmation,
+		the worker applies the client's target checks from 6968BA before sending.
 		================
 		*/
 		chooseClockTarget( item: InventoryItem | undefined ) {
@@ -83,7 +83,8 @@ export function createCosHud() {
 		================
 		reconcileClock
 
-		A changed source slot or closed inventory cannot retain an armed item.
+		The native cursor is global: hotbar use can arm it with inventory closed.
+		A changed source slot or departure from the world cancels the selection.
 		================
 		*/
 		reconcileClock( items: readonly InventoryItem[], visible: boolean ) {

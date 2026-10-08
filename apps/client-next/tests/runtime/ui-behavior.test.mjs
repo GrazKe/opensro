@@ -5093,7 +5093,7 @@ test("right-clicking a rental clock arms the yellow cursor and confirms the clic
 		assert.equal( sent.length, 0, "arming never picks a pet or spends the clock" );
 		f.ui.step( f.state, 2100 );
 		// 567290: any occupied slot opens the confirmation and clears the
-		// cursor; the server judges the target (an attack pet is refused there).
+		// cursor; the worker checks the target when the user confirms.
 		f.ui.event( { kind: "activate", id: "slot:15" } );
 		assert.equal( f.ui.cursor(), null );
 		for ( let t = 2200; t <= 2600; t += 100 ) scene = f.ui.step( f.state, t ) ?? scene;
@@ -5126,6 +5126,23 @@ test("right-clicking a rental clock arms the yellow cursor and confirms the clic
 		f.ui.event( { kind: "key", code: "Escape" } );
 		assert.equal( f.ui.cursor(), null );
 		assert.equal( sent.length, 1, "Escape never sends a renewal" );
+		f.ui.event( { kind: "activate", id: "close" } );
+		f.state.gameplay.quickSlots = [ { slot: 1, kind: 0x46, payload: 0 } ];
+		f.ui.step( f.state, 3400 );
+		f.ui.event( { kind: "key", code: "Digit1" } );
+		f.ui.step( f.state, 3500 );
+		assert.equal( f.ui.cursor(), 0xa6, "hotbar use retains targeting with the inventory closed" );
+		assert.equal( sent.length, 1, "hotbar activation cannot spend a clock without its target" );
+		f.ui.event( { kind: "key", code: "KeyI" } );
+		for ( let t = 3600; t <= 3900; t += 100 ) f.ui.step( f.state, t );
+		f.ui.event( { kind: "activate", id: "slot:14" } );
+		f.ui.step( f.state, 4000 );
+		f.ui.event( { kind: "activate", id: "cos-renew-confirm" } );
+		assert.deepEqual( sent.at( -1 ), {
+			kind: "gameplay",
+			command: { kind: "item-use", slot: 13, summonerSlot: 14 }
+		} );
+		assert.equal( sent.length, 2 );
 	} finally {
 		f.dispose();
 	}

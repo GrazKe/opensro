@@ -77,12 +77,12 @@ day, using the retail item parameter in minutes. A valid use consumes one
 clock and adds time to max(current expiry, now). It preserves the pet name,
 settings and stored items; a dormant pet stays dormant until summoned.
 
-The clock accepts grab pets only. Grass of Life accepts attack pets and
-cannot renew a grab pet. Renewal also repairs zero wire HP left by an older
-server so an expired pet can be summoned again. Wire vitals remain for packet
-compatibility; grab pets have no displayed health and ignore periodic damage
-and resource debits. Rental expiry still dismisses them. Diagnostics display
-version IDs and uptime without client/server commit descriptions.
+The clock accepts grab pets only. Clicking any occupied item slot opens the
+confirmation; confirming an unsuitable item produces the native chat refusal
+without sending an item-use packet. Grass of Life requires a dead attack pet
+and cannot renew a grab pet. Grab pets retain their native target health gauge
+but ignore periodic damage and resource debits. Rental expiry still dismisses
+them. Renewal changes rental time without resetting health or mana.
 
 The [historical official Q&A reproduced here](https://www.silkroadonline.de/silkroadonline-allgemein/anleitungen-guides/1878-alle-q-a-von-sro-net-zusammengefasst/)
 describes the clock renewing the monkey for four weeks and Grass of Life
